@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>iroh connectivity spike</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, system-ui, sans-serif;
+      background: #111; color: #eee;
+      padding: 16px; max-width: 640px; margin: 0 auto;
+    }
+    h1 { font-size: 1.1rem; margin-bottom: 4px; }
+    .sub { color: #999; font-size: 0.8rem; margin-bottom: 12px; }
+    #banner {
+      border-radius: 12px; padding: 20px; text-align: center;
+      font-size: 1.5rem; font-weight: 800; margin-bottom: 12px;
+      background: #333; color: #ccc;
+    }
+    #banner.ok   { background: #0a7d33; color: #fff; }
+    #banner.bad  { background: #b3261e; color: #fff; }
+    #banner.busy { background: #8a6d00; color: #fff; }
+    #detail { font-size: 0.85rem; margin-top: 8px; font-weight: 400; white-space: pre-wrap; word-break: break-all; text-align: left; }
+    .row { display: flex; gap: 8px; margin-bottom: 12px; }
+    input {
+      flex: 1; font-size: 1.1rem; padding: 12px; border-radius: 8px;
+      border: 1px solid #555; background: #222; color: #eee;
+    }
+    button {
+      font-size: 1.1rem; font-weight: 700; padding: 12px 20px;
+      border-radius: 8px; border: 0; background: #3b6ef5; color: #fff;
+    }
+    button:disabled { background: #444; color: #888; }
+    #nodeid { font-size: 0.7rem; color: #777; word-break: break-all; margin-bottom: 12px; }
+    #log {
+      font-family: ui-monospace, monospace; font-size: 0.72rem;
+      background: #000; border-radius: 8px; padding: 10px;
+      white-space: pre-wrap; word-break: break-all; min-height: 120px;
+    }
+  </style>
+</head>
+<body>
+  <h1>iroh connectivity spike</h1>
+  <div class="sub">phone (cellular) &rarr; n0 relay &rarr; desktop behind residential NAT</div>
+  <div id="banner">loading&hellip;<div id="detail"></div></div>
+  <div class="row">
+    <input id="msg" placeholder="type a word" autocomplete="off">
+    <button id="send" disabled>Send</button>
+  </div>
+  <div id="nodeid"></div>
+  <div id="log"></div>
+  <script type="module" src="./main.js"></script>
+</body>
+</html>
