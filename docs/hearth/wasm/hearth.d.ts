@@ -14,6 +14,13 @@ export class HearthClient {
     [Symbol.dispose](): void;
     endpoint_id(): string;
     /**
+     * Fetch the last `limit` transcript turns from the desktop, oldest
+     * first. Resolves to an array of plain `{role, text}` objects. Used on
+     * page load so the client renders the desktop's authoritative transcript
+     * instead of whatever this browser last saw.
+     */
+    history(server_id: string, limit: number): Promise<any>;
+    /**
      * Send one message to the desktop identified by `server_id`.
      * Returns a ReadableStream of progress events (see module docs).
      */
@@ -57,6 +64,7 @@ export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly __wbg_hearthclient_free: (a: number, b: number) => void;
     readonly hearthclient_endpoint_id: (a: number, b: number) => void;
+    readonly hearthclient_history: (a: number, b: number, c: number, d: number) => number;
     readonly hearthclient_send: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly hearthclient_spawn: () => number;
     readonly start: () => void;
@@ -74,15 +82,15 @@ export interface InitOutput {
     readonly intounderlyingsource_cancel: (a: number) => void;
     readonly intounderlyingsource_pull: (a: number, b: number) => number;
     readonly ring_core_0_17_14__bn_mul_mont: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
-    readonly __wasm_bindgen_func_elem_14448: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_14460: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_5492: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_2209: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_7136: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_5272: (a: number, b: number) => void;
-    readonly __wasm_bindgen_func_elem_6412: (a: number, b: number) => void;
-    readonly __wasm_bindgen_func_elem_6448: (a: number, b: number) => void;
-    readonly __wasm_bindgen_func_elem_14318: (a: number, b: number) => void;
+    readonly __wasm_bindgen_func_elem_14631: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_14643: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_5670: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_2387: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_7314: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_5450: (a: number, b: number) => void;
+    readonly __wasm_bindgen_func_elem_6590: (a: number, b: number) => void;
+    readonly __wasm_bindgen_func_elem_6626: (a: number, b: number) => void;
+    readonly __wasm_bindgen_func_elem_14501: (a: number, b: number) => void;
     readonly __wbindgen_export: (a: number, b: number) => number;
     readonly __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_export3: (a: number) => void;

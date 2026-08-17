@@ -43,6 +43,9 @@
     .msg.agent { align-self: flex-start; background: #2a2620; border-bottom-left-radius: 4px; }
     .msg.error { align-self: flex-start; background: #4a221d; color: #f0b9b0; }
     .msg.pending { opacity: 0.6; font-style: italic; }
+    /* Cached (localStorage) history shown while the desktop's authoritative
+       transcript is being fetched — visibly provisional, never "real". */
+    #chat.stale .msg { opacity: 0.45; }
     form {
       display: flex; gap: 8px; padding: 10px 16px;
       padding-bottom: calc(10px + env(safe-area-inset-bottom));

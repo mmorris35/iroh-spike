@@ -1,10 +1,15 @@
 /*
  * Hearth phone client logic.
  *
- * Owns: chat rendering, per-desktop history in localStorage, and driving the
- * wasm iroh client. It does NOT own conversation memory — the desktop does.
- * localStorage here is display cache only; clearing it loses nothing the
- * agent knows.
+ * Owns: chat rendering and driving the wasm iroh client. It owns NO
+ * authoritative state — the desktop's conversation.log.md is the transcript,
+ * and this page is a view over it. On every load we fetch the transcript tail
+ * from the desktop (HearthClient.history) and render that; a fresh browser on
+ * a new device sees the same conversation as every other device.
+ *
+ * localStorage is kept purely as an offline cache for instant paint: cached
+ * turns are rendered dimmed (#chat.stale) under a "catching up…" status until
+ * the desktop's copy arrives and replaces them. Clearing it loses nothing.
  *
  * Message flow: send() calls HearthClient.send(serverId, text), which returns
  * a ReadableStream of progress events from Rust
@@ -32,11 +37,16 @@ const serverId =
   new URLSearchParams(location.search).get("node") ||
   "";
 
+/* Display cache only (instant paint while we fetch the real transcript).
+ * The desktop's copy always wins; see fetchHistory(). */
 const HISTORY_KEY = `hearth-history-${serverId}`;
+const HISTORY_LIMIT = 200;
 let history = [];
 try { history = JSON.parse(localStorage.getItem(HISTORY_KEY)) || []; } catch { /* corrupt cache */ }
 
 let client = null;
+/* True once the rendered conversation is the desktop's copy, not the cache. */
+let historySynced = false;
 
 function setStatus(text, isError = false) {
   statusEl.textContent = text;
@@ -59,7 +69,7 @@ function addBubble(role, text, cls = "") {
 function saveHistory(role, text) {
   history.push({ role, text });
   // Cap the display cache; the desktop holds the real transcript.
-  if (history.length > 200) history = history.slice(-200);
+  if (history.length > HISTORY_LIMIT) history = history.slice(-HISTORY_LIMIT);
   try { localStorage.setItem(HISTORY_KEY, JSON.stringify(history)); } catch { /* quota */ }
 }
 
@@ -69,13 +79,18 @@ async function main() {
     addBubble("agent", "This link is missing the desktop's id. Open the exact link (or QR) that hearth-desktop printed — it ends with #<endpoint-id>.", "error");
     return;
   }
-  for (const m of history) addBubble(m.role, m.text);
+  // Instant paint from the offline cache — visibly provisional (dimmed via
+  // #chat.stale) so stale local state is never presented as the conversation.
+  if (history.length) {
+    chatEl.classList.add("stale");
+    for (const m of history) addBubble(m.role, m.text);
+  }
   try {
     setStatus("loading…");
     await init();
     setStatus("starting iroh…");
     client = await HearthClient.spawn();
-    setStatus("ready");
+    await fetchHistory();
     sendBtn.disabled = false;
     msgEl.focus();
 
@@ -84,6 +99,33 @@ async function main() {
   } catch (e) {
     setStatus("failed to start", true);
     addBubble("agent", `Could not start: ${e}`, "error");
+  }
+}
+
+/* Fetch the authoritative transcript tail from the desktop and make it the
+ * rendered conversation, replacing whatever the cache painted. On failure the
+ * cached render stays dimmed — honest about being possibly stale — and input
+ * is still enabled so the user can try a message (which will surface the same
+ * unreachability clearly). */
+async function fetchHistory() {
+  setStatus("catching up…");
+  try {
+    const turns = await client.history(serverId, HISTORY_LIMIT);
+    history = turns.map((t) => ({ role: t.role === "user" ? "user" : "agent", text: t.text }));
+    chatEl.replaceChildren();
+    chatEl.classList.remove("stale");
+    for (const m of history) addBubble(m.role, m.text);
+    try { localStorage.setItem(HISTORY_KEY, JSON.stringify(history)); } catch { /* quota */ }
+    historySynced = true;
+    setStatus("ready");
+    // Test hook, same pattern as ?auto=: report the fetched history to the
+    // serving http server's log via a deliberate 404. Harmless in production.
+    if (new URLSearchParams(location.search).has("probe")) {
+      const lastText = history.length ? history[history.length - 1].text : "";
+      fetch(`./__hearth_history__n=${history.length}&last=${encodeURIComponent(lastText.slice(0, 120))}`).catch(() => {});
+    }
+  } catch (e) {
+    setStatus("couldn't catch up — is your desktop running?", true);
   }
 }
 
@@ -120,6 +162,9 @@ async function send(isAuto = false) {
           saveHistory("agent", ev.reply);
           setStatus("ready");
           outcome = { ok: true, reply: ev.reply };
+          // If the load-time catch-up failed, this reply proves the desktop
+          // is reachable again — fetch the real transcript now.
+          if (!historySynced) fetchHistory();
         }
       } else if (ev.type === "closed") {
         if (ev.error && !received) {
