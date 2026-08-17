@@ -15,17 +15,22 @@ export class HearthClient {
     endpoint_id(): string;
     /**
      * Fetch the last `limit` transcript turns from the desktop, oldest
-     * first. Resolves to an array of plain `{role, text}` objects. Used on
-     * page load so the client renders the desktop's authoritative transcript
-     * instead of whatever this browser last saw.
+     * first. Resolves to `{turns: [{role, text}, …], warning}`. Used on page
+     * load so the client renders the desktop's authoritative transcript
+     * instead of whatever this browser last saw — and, because every load
+     * makes this call, it is where the version handshake rides.
      */
-    history(server_id: string, limit: number): Promise<any>;
+    history(server_id: string, limit: number, client_version?: string | null): Promise<any>;
     /**
-     * Present a pairing secret (from the scanned QR fragment) to the
-     * desktop. Resolves on success — including "already paired" — and
-     * rejects with the desktop's stated reason otherwise.
+     * Present a pairing code (typed by the user, read off the desktop's
+     * screen) to the desktop. Resolves on success — including "already
+     * paired" — and rejects with the desktop's stated reason otherwise.
+     *
+     * `code` is passed through as typed; the desktop normalises it
+     * (uppercase, separators stripped), so there is exactly one place that
+     * decides what a code means.
      */
-    pair(server_id: string, secret: string, name: string): Promise<void>;
+    pair(server_id: string, code: string, name: string, client_version?: string | null): Promise<void>;
     /**
      * The device secret to persist (hex). Never leaves the browser.
      */
@@ -34,7 +39,7 @@ export class HearthClient {
      * Send one message to the desktop identified by `server_id`.
      * Returns a ReadableStream of progress events (see module docs).
      */
-    send(server_id: string, message: string): ReadableStream;
+    send(server_id: string, message: string, client_version?: string | null): ReadableStream;
     /**
      * Spawn with this device's stable key. `secret_hex` is the persisted
      * device secret (from a previous `secret_hex()` call, kept by the page
@@ -45,6 +50,12 @@ export class HearthClient {
      * recovery story: re-scan a QR).
      */
     static spawn(secret_hex?: string | null): Promise<HearthClient>;
+    /**
+     * The client version this wasm module was built with. The page reports
+     * its *own* version on the wire (the shell is what goes stale), but
+     * exposing this lets the page notice a shell/wasm mismatch.
+     */
+    static wasmVersion(): string;
 }
 
 export class IntoUnderlyingByteSource {
@@ -83,11 +94,12 @@ export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly __wbg_hearthclient_free: (a: number, b: number) => void;
     readonly hearthclient_endpoint_id: (a: number, b: number) => void;
-    readonly hearthclient_history: (a: number, b: number, c: number, d: number) => number;
-    readonly hearthclient_pair: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => number;
+    readonly hearthclient_history: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
+    readonly hearthclient_pair: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => number;
     readonly hearthclient_secret_hex: (a: number, b: number) => void;
-    readonly hearthclient_send: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
+    readonly hearthclient_send: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
     readonly hearthclient_spawn: (a: number, b: number) => number;
+    readonly hearthclient_wasmVersion: (a: number) => void;
     readonly start: () => void;
     readonly __wbg_intounderlyingbytesource_free: (a: number, b: number) => void;
     readonly __wbg_intounderlyingsink_free: (a: number, b: number) => void;
@@ -103,15 +115,15 @@ export interface InitOutput {
     readonly intounderlyingsource_cancel: (a: number) => void;
     readonly intounderlyingsource_pull: (a: number, b: number) => number;
     readonly ring_core_0_17_14__bn_mul_mont: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
-    readonly __wasm_bindgen_func_elem_14726: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_14738: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_5765: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_2481: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_7409: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_5545: (a: number, b: number) => void;
-    readonly __wasm_bindgen_func_elem_6685: (a: number, b: number) => void;
-    readonly __wasm_bindgen_func_elem_6721: (a: number, b: number) => void;
-    readonly __wasm_bindgen_func_elem_14596: (a: number, b: number) => void;
+    readonly __wasm_bindgen_func_elem_14735: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_14747: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_5774: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_2490: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_7418: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_5554: (a: number, b: number) => void;
+    readonly __wasm_bindgen_func_elem_6694: (a: number, b: number) => void;
+    readonly __wasm_bindgen_func_elem_6730: (a: number, b: number) => void;
+    readonly __wasm_bindgen_func_elem_14605: (a: number, b: number) => void;
     readonly __wbindgen_export: (a: number, b: number) => number;
     readonly __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_export3: (a: number) => void;

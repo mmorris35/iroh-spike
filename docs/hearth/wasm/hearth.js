@@ -38,36 +38,47 @@ export class HearthClient {
     }
     /**
      * Fetch the last `limit` transcript turns from the desktop, oldest
-     * first. Resolves to an array of plain `{role, text}` objects. Used on
-     * page load so the client renders the desktop's authoritative transcript
-     * instead of whatever this browser last saw.
+     * first. Resolves to `{turns: [{role, text}, …], warning}`. Used on page
+     * load so the client renders the desktop's authoritative transcript
+     * instead of whatever this browser last saw — and, because every load
+     * makes this call, it is where the version handshake rides.
      * @param {string} server_id
      * @param {number} limit
+     * @param {string | null} [client_version]
      * @returns {Promise<any>}
      */
-    history(server_id, limit) {
+    history(server_id, limit, client_version) {
         const ptr0 = passStringToWasm0(server_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
         const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.hearthclient_history(this.__wbg_ptr, ptr0, len0, limit);
+        var ptr1 = isLikeNone(client_version) ? 0 : passStringToWasm0(client_version, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        var len1 = WASM_VECTOR_LEN;
+        const ret = wasm.hearthclient_history(this.__wbg_ptr, ptr0, len0, limit, ptr1, len1);
         return takeObject(ret);
     }
     /**
-     * Present a pairing secret (from the scanned QR fragment) to the
-     * desktop. Resolves on success — including "already paired" — and
-     * rejects with the desktop's stated reason otherwise.
+     * Present a pairing code (typed by the user, read off the desktop's
+     * screen) to the desktop. Resolves on success — including "already
+     * paired" — and rejects with the desktop's stated reason otherwise.
+     *
+     * `code` is passed through as typed; the desktop normalises it
+     * (uppercase, separators stripped), so there is exactly one place that
+     * decides what a code means.
      * @param {string} server_id
-     * @param {string} secret
+     * @param {string} code
      * @param {string} name
+     * @param {string | null} [client_version]
      * @returns {Promise<void>}
      */
-    pair(server_id, secret, name) {
+    pair(server_id, code, name, client_version) {
         const ptr0 = passStringToWasm0(server_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
         const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passStringToWasm0(secret, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const ptr1 = passStringToWasm0(code, wasm.__wbindgen_export, wasm.__wbindgen_export2);
         const len1 = WASM_VECTOR_LEN;
         const ptr2 = passStringToWasm0(name, wasm.__wbindgen_export, wasm.__wbindgen_export2);
         const len2 = WASM_VECTOR_LEN;
-        const ret = wasm.hearthclient_pair(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        var ptr3 = isLikeNone(client_version) ? 0 : passStringToWasm0(client_version, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        var len3 = WASM_VECTOR_LEN;
+        const ret = wasm.hearthclient_pair(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
         return takeObject(ret);
     }
     /**
@@ -95,16 +106,19 @@ export class HearthClient {
      * Returns a ReadableStream of progress events (see module docs).
      * @param {string} server_id
      * @param {string} message
+     * @param {string | null} [client_version]
      * @returns {ReadableStream}
      */
-    send(server_id, message) {
+    send(server_id, message, client_version) {
         try {
             const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
             const ptr0 = passStringToWasm0(server_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
             const len0 = WASM_VECTOR_LEN;
             const ptr1 = passStringToWasm0(message, wasm.__wbindgen_export, wasm.__wbindgen_export2);
             const len1 = WASM_VECTOR_LEN;
-            wasm.hearthclient_send(retptr, this.__wbg_ptr, ptr0, len0, ptr1, len1);
+            var ptr2 = isLikeNone(client_version) ? 0 : passStringToWasm0(client_version, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+            var len2 = WASM_VECTOR_LEN;
+            wasm.hearthclient_send(retptr, this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2);
             var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
             var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
             var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
@@ -132,6 +146,28 @@ export class HearthClient {
         var len0 = WASM_VECTOR_LEN;
         const ret = wasm.hearthclient_spawn(ptr0, len0);
         return takeObject(ret);
+    }
+    /**
+     * The client version this wasm module was built with. The page reports
+     * its *own* version on the wire (the shell is what goes stale), but
+     * exposing this lets the page notice a shell/wasm mismatch.
+     * @returns {string}
+     */
+    static wasmVersion() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.hearthclient_wasmVersion(retptr);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            deferred1_0 = r0;
+            deferred1_1 = r1;
+            return getStringFromWasm0(r0, r1);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+            wasm.__wbindgen_export4(deferred1_0, deferred1_1, 1);
+        }
     }
 }
 if (Symbol.dispose) HearthClient.prototype[Symbol.dispose] = HearthClient.prototype.free;
@@ -571,7 +607,7 @@ function __wbg_get_imports() {
                     const a = state0.a;
                     state0.a = 0;
                     try {
-                        return __wasm_bindgen_func_elem_14738(a, state0.b, arg0, arg1);
+                        return __wasm_bindgen_func_elem_14747(a, state0.b, arg0, arg1);
                     } finally {
                         state0.a = a;
                     }
@@ -827,42 +863,42 @@ function __wbg_get_imports() {
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
             // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 1772, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_5765);
+            const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_5774);
             return addHeapObject(ret);
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
             // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 3371, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_14726);
+            const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_14735);
             return addHeapObject(ret);
         },
         __wbindgen_cast_0000000000000003: function(arg0, arg1) {
             // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("CloseEvent")], shim_idx: 564, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_2481);
+            const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_2490);
             return addHeapObject(ret);
         },
         __wbindgen_cast_0000000000000004: function(arg0, arg1) {
             // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("MessageEvent")], shim_idx: 2178, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_7409);
+            const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_7418);
             return addHeapObject(ret);
         },
         __wbindgen_cast_0000000000000005: function(arg0, arg1) {
             // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 1734, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_5545);
+            const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_5554);
             return addHeapObject(ret);
         },
         __wbindgen_cast_0000000000000006: function(arg0, arg1) {
             // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 1920, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_6685);
+            const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_6694);
             return addHeapObject(ret);
         },
         __wbindgen_cast_0000000000000007: function(arg0, arg1) {
             // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 1922, ret: Unit, inner_ret: Some(Unit) }, mutable: false }) -> Externref`.
-            const ret = makeClosure(arg0, arg1, __wasm_bindgen_func_elem_6721);
+            const ret = makeClosure(arg0, arg1, __wasm_bindgen_func_elem_6730);
             return addHeapObject(ret);
         },
         __wbindgen_cast_0000000000000008: function(arg0, arg1) {
             // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 3357, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_14596);
+            const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_14605);
             return addHeapObject(ret);
         },
         __wbindgen_cast_0000000000000009: function(arg0) {
@@ -899,38 +935,38 @@ function __wbg_get_imports() {
     };
 }
 
-function __wasm_bindgen_func_elem_5545(arg0, arg1) {
-    wasm.__wasm_bindgen_func_elem_5545(arg0, arg1);
+function __wasm_bindgen_func_elem_5554(arg0, arg1) {
+    wasm.__wasm_bindgen_func_elem_5554(arg0, arg1);
 }
 
-function __wasm_bindgen_func_elem_6685(arg0, arg1) {
-    wasm.__wasm_bindgen_func_elem_6685(arg0, arg1);
+function __wasm_bindgen_func_elem_6694(arg0, arg1) {
+    wasm.__wasm_bindgen_func_elem_6694(arg0, arg1);
 }
 
-function __wasm_bindgen_func_elem_6721(arg0, arg1) {
-    wasm.__wasm_bindgen_func_elem_6721(arg0, arg1);
+function __wasm_bindgen_func_elem_6730(arg0, arg1) {
+    wasm.__wasm_bindgen_func_elem_6730(arg0, arg1);
 }
 
-function __wasm_bindgen_func_elem_14596(arg0, arg1) {
-    wasm.__wasm_bindgen_func_elem_14596(arg0, arg1);
+function __wasm_bindgen_func_elem_14605(arg0, arg1) {
+    wasm.__wasm_bindgen_func_elem_14605(arg0, arg1);
 }
 
-function __wasm_bindgen_func_elem_5765(arg0, arg1, arg2) {
-    wasm.__wasm_bindgen_func_elem_5765(arg0, arg1, addHeapObject(arg2));
+function __wasm_bindgen_func_elem_5774(arg0, arg1, arg2) {
+    wasm.__wasm_bindgen_func_elem_5774(arg0, arg1, addHeapObject(arg2));
 }
 
-function __wasm_bindgen_func_elem_2481(arg0, arg1, arg2) {
-    wasm.__wasm_bindgen_func_elem_2481(arg0, arg1, addHeapObject(arg2));
+function __wasm_bindgen_func_elem_2490(arg0, arg1, arg2) {
+    wasm.__wasm_bindgen_func_elem_2490(arg0, arg1, addHeapObject(arg2));
 }
 
-function __wasm_bindgen_func_elem_7409(arg0, arg1, arg2) {
-    wasm.__wasm_bindgen_func_elem_7409(arg0, arg1, addHeapObject(arg2));
+function __wasm_bindgen_func_elem_7418(arg0, arg1, arg2) {
+    wasm.__wasm_bindgen_func_elem_7418(arg0, arg1, addHeapObject(arg2));
 }
 
-function __wasm_bindgen_func_elem_14726(arg0, arg1, arg2) {
+function __wasm_bindgen_func_elem_14735(arg0, arg1, arg2) {
     try {
         const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        wasm.__wasm_bindgen_func_elem_14726(retptr, arg0, arg1, addHeapObject(arg2));
+        wasm.__wasm_bindgen_func_elem_14735(retptr, arg0, arg1, addHeapObject(arg2));
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
         if (r1) {
@@ -941,8 +977,8 @@ function __wasm_bindgen_func_elem_14726(arg0, arg1, arg2) {
     }
 }
 
-function __wasm_bindgen_func_elem_14738(arg0, arg1, arg2, arg3) {
-    wasm.__wasm_bindgen_func_elem_14738(arg0, arg1, addHeapObject(arg2), addHeapObject(arg3));
+function __wasm_bindgen_func_elem_14747(arg0, arg1, arg2, arg3) {
+    wasm.__wasm_bindgen_func_elem_14747(arg0, arg1, addHeapObject(arg2), addHeapObject(arg3));
 }
 
 

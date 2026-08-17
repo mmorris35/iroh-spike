@@ -7,46 +7,96 @@
  * from the desktop (HearthClient.history) and render that; a fresh browser on
  * a new device sees the same conversation as every other device.
  *
- * localStorage is kept purely as an offline cache for instant paint: cached
- * turns are rendered dimmed (#chat.stale) under a "catching up…" status until
- * the desktop's copy arrives and replaces them. Clearing it loses nothing.
+ * localStorage is kept purely as an offline cache for instant paint, plus the
+ * two durable identifiers below: this device's key, and the desktop's address.
  *
- * Message flow: send() calls HearthClient.send(serverId, text), which returns
- * a ReadableStream of progress events from Rust
- * ({type: connected|sent|received|closed}). We render status transitions from
- * those events; "received" carries the agent's reply (or an agent-side error,
- * so "the model broke" looks different from "desktop unreachable" — R3.6).
+ * ## Address vs authorization (the 2026-08-17 rework)
  *
- * Test hook: ?auto=<message> auto-sends once after load and then fetches
- * ./__hearth_result__ok=<0|1>&reply=... — a 404 the serving http server logs,
- * which lets a headless-browser test read the outcome from the server log.
- * Harmless in production (the fetch just 404s).
+ * The URL fragment carries ONLY the desktop's endpoint id. That is an address:
+ * safe to bookmark, cache, install to a home screen and re-launch forever.
+ * Authorization is a separate short code the owner reads off the desktop and
+ * types here. Putting the two in one string caused three bugs in one
+ * afternoon — Safari consuming the single-use secret on load before the user
+ * could install; the installed app re-offering to pair on every launch from
+ * its saved start URL; and neither fix reaching the installed app at all. See
+ * docs/DECISIONS.md #12.
+ *
+ * Message flow: send() calls HearthClient.send(serverId, text, version), which
+ * returns a ReadableStream of progress events from Rust
+ * ({type: connected|sent|received|denied|closed}). "received" carries the
+ * agent's reply (or an agent-side error, so "the model broke" looks different
+ * from "desktop unreachable" — R3.6) and any desktop warning.
+ *
+ * Test hooks (all harmless in production — they are deliberate 404s the
+ * serving http server logs, which is how the headless tests read outcomes):
+ *   ?auto=<message>  auto-send once after load  → ./__hearth_result__…
+ *   ?probe           report history + client version → ./__hearth_history__…,
+ *                    ./__hearth_client__…
  */
-import init, { HearthClient } from "./wasm/hearth.js";
+/* This build of the app shell. Stamped by scripts/set-client-version.sh
+ * together with web/sw.js and src/version.rs — the version is a build
+ * artefact, not three numbers to keep in your head. Reported to the desktop on
+ * every request so "your client is stale" can be *said* rather than inferred
+ * from behaviour nobody shipped. */
+const CLIENT_VERSION = "0.3.0";
+/* Exposed so "which build is this phone actually running?" is answerable from
+ * a console or a remote inspector without reading source. The whole class of
+ * bug this file was reworked to fix was invisible precisely because nobody
+ * could ask that question. */
+window.HEARTH_CLIENT_VERSION = CLIENT_VERSION;
+
+/* The wasm is loaded through a *dynamic* import with the build version in the
+ * query, and `init` is handed an equally versioned URL for the binary itself
+ * (wasm-bindgen would otherwise derive an unversioned one from import.meta.url).
+ * Both are deliberate: the service worker caches wasm cache-first — it is
+ * ~2.9 MB and changes rarely — so the only thing that can force a fresh copy is
+ * the URL changing. A static `import` cannot carry the version, and a new shell
+ * running an old wasm is a signature mismatch waiting to happen. The two halves
+ * of a build travel together or the whole update story is a fiction. */
+const WASM_JS = new URL(`./wasm/hearth.js?v=${CLIENT_VERSION}`, import.meta.url);
+const WASM_BIN = new URL(`./wasm/hearth_bg.wasm?v=${CLIENT_VERSION}`, import.meta.url);
+const { default: init, HearthClient } = await import(WASM_JS.href);
 
 const chatEl = document.getElementById("chat");
 const statusEl = document.getElementById("status");
 const msgEl = document.getElementById("msg");
 const sendBtn = document.getElementById("send");
 const form = document.getElementById("composer");
+const noticeEl = document.getElementById("notice");
 
-/* The URL fragment carries the desktop's endpoint id and, on a pairing QR,
- * a single-use pairing secret: #<id>&pair=<secret>. Both stay in the
- * fragment so the web host never sees either. ?node= accepted for
- * compatibility with the spike's URL shape. */
+const probing = new URLSearchParams(location.search).has("probe");
+/** Report to the dev server's log (a deliberate 404). No-op-ish in production. */
+function probe(path) {
+  if (probing) fetch(path).catch(() => {});
+}
+probe(`./__hearth_client__version=${CLIENT_VERSION}&controlled=${navigator.serviceWorker?.controller ? 1 : 0}`);
+
+/* ---------------------------------------------------------------------------
+ * The desktop's address
+ *
+ * Resolution order: URL fragment → ?node= (the spike's shape) → the last
+ * address this browser successfully used. The localStorage fallback matters
+ * because a launcher, a share sheet or a stripped bookmark can drop a
+ * fragment, and losing the address should not look like a broken app. It is
+ * safe to persist precisely because it is not a credential.
+ * ------------------------------------------------------------------------ */
+const SERVER_KEY = "hearth-server-id";
 const fragment = location.hash ? location.hash.slice(1) : "";
-const [fragId, ...fragParams] = fragment.split("&");
+/* Tolerate (and discard) any leftover &pair=… from a pre-0.3 QR still living
+ * in someone's saved start URL: the id is the part before the first '&'. */
+const fragId = fragment.split("&")[0];
+let stored = null;
+try { stored = localStorage.getItem(SERVER_KEY); } catch { /* private mode */ }
 const serverId =
-  fragId || new URLSearchParams(location.search).get("node") || "";
-let pairSecret = null;
-for (const p of fragParams) {
-  if (p.startsWith("pair=")) pairSecret = p.slice(5);
+  fragId || new URLSearchParams(location.search).get("node") || stored || "";
+if (serverId && serverId !== stored) {
+  try { localStorage.setItem(SERVER_KEY, serverId); } catch { /* private mode */ }
 }
 
 /* This browser's stable device identity (its iroh secret key, hex). Created
  * on first visit, reused on every load — the desktop's allowlist stores the
  * public half, so losing this (clearing browser data) unpairs the device;
- * recovery is re-scanning a QR. It never leaves this browser. */
+ * recovery is pairing again with a fresh code. It never leaves this browser. */
 const DEVICE_KEY = "hearth-device-secret";
 
 /* A rough human name for the device list ("iPhone", not a UA string). */
@@ -71,10 +121,33 @@ try { history = JSON.parse(localStorage.getItem(HISTORY_KEY)) || []; } catch { /
 let client = null;
 /* True once the rendered conversation is the desktop's copy, not the cache. */
 let historySynced = false;
+/* Warnings already shown, so a chat reply does not repeat the load-time one. */
+const shownNotices = new Set();
 
 function setStatus(text, isError = false) {
   statusEl.textContent = text;
   statusEl.className = isError ? "err" : "";
+}
+
+/**
+ * A persistent, honest banner above the conversation. Used for exactly two
+ * things: "this app updated" and "this app is out of date". Both are
+ * statements about the code the user is running, which is not something to
+ * bury in the chat log.
+ */
+function showNotice(text, actionLabel, action) {
+  if (shownNotices.has(text)) return;
+  shownNotices.add(text);
+  noticeEl.replaceChildren();
+  noticeEl.appendChild(document.createTextNode(text + " "));
+  if (actionLabel) {
+    const btn = document.createElement("button");
+    btn.textContent = actionLabel;
+    btn.className = "notice-btn";
+    btn.onclick = action;
+    noticeEl.appendChild(btn);
+  }
+  noticeEl.hidden = false;
 }
 
 function addBubble(role, text, cls = "") {
@@ -98,6 +171,8 @@ function saveHistory(role, text) {
 }
 
 async function main() {
+  registerServiceWorker();
+
   if (!serverId) {
     setStatus("no desktop id in URL", true);
     addBubble("agent", "This link is missing the desktop's id. Open the exact link (or QR) that hearth-desktop printed — it ends with #<endpoint-id>.", "error");
@@ -111,32 +186,27 @@ async function main() {
   }
   try {
     setStatus("loading…");
-    await init();
+    await init({ module_or_path: WASM_BIN });
     setStatus("starting iroh…");
     let deviceSecret = null;
     try { deviceSecret = localStorage.getItem(DEVICE_KEY); } catch { /* private mode */ }
     client = await HearthClient.spawn(deviceSecret ?? undefined);
     try { localStorage.setItem(DEVICE_KEY, client.secret_hex()); } catch { /* private mode: pairing won't survive reload */ }
 
-    // Try the connection FIRST, then decide whether pairing is even needed.
-    //
-    // An installed iOS web app relaunches its *saved* start URL every time, and
-    // that URL still contains the pairing fragment from installation —
-    // history.replaceState only rewrites the live session, never the saved
-    // shortcut. Offering to pair whenever a secret is present therefore nagged
-    // on every single launch, forever. Whether this device is already trusted is
-    // a question only the desktop can answer, so ask it.
+    // Ask the desktop whether this device is trusted before showing anything
+    // about pairing. Whether we are paired is a question only the desktop can
+    // answer, and asking it is what makes an already-paired device silent —
+    // the second of the three 2026-08-17 bugs was offering to pair on every
+    // launch because a saved URL still looked like an offer.
     const denied = await fetchHistory();
-    if (denied && pairSecret) {
+    if (denied) {
       offerPairing();
       return;
     }
     // Input stays enabled when merely offline (retrying surfaces the same
-    // failure honestly) but not when this device was refused as unpaired.
-    if (!denied) {
-      sendBtn.disabled = false;
-      msgEl.focus();
-    }
+    // failure honestly).
+    sendBtn.disabled = false;
+    msgEl.focus();
 
     const auto = new URLSearchParams(location.search).get("auto");
     if (auto) { msgEl.value = auto; send(true); }
@@ -144,6 +214,13 @@ async function main() {
     setStatus("failed to start", true);
     addBubble("agent", `Could not start: ${e}`, "error");
   }
+}
+
+/* Surface a desktop-side warning (currently only the version handshake).
+ * Rendered as its own banner with a Reload action, because the honest fix for
+ * "you are running old code" is to fetch new code. */
+function handleWarning(warning) {
+  if (warning) showNotice(warning, "Reload", () => location.reload());
 }
 
 /* Fetch the authoritative transcript tail from the desktop and make it the
@@ -155,7 +232,9 @@ async function main() {
 async function fetchHistory() {
   setStatus("catching up…");
   try {
-    const turns = await client.history(serverId, HISTORY_LIMIT);
+    const result = await client.history(serverId, HISTORY_LIMIT, CLIENT_VERSION);
+    const turns = result.turns || [];
+    handleWarning(result.warning);
     history = turns.map((t) => ({ role: t.role === "user" ? "user" : "agent", text: t.text }));
     chatEl.replaceChildren();
     chatEl.classList.remove("stale");
@@ -163,12 +242,8 @@ async function fetchHistory() {
     try { localStorage.setItem(HISTORY_KEY, JSON.stringify(history)); } catch { /* quota */ }
     historySynced = true;
     setStatus("ready");
-    // Test hook, same pattern as ?auto=: report the fetched history to the
-    // serving http server's log via a deliberate 404. Harmless in production.
-    if (new URLSearchParams(location.search).has("probe")) {
-      const lastText = history.length ? history[history.length - 1].text : "";
-      fetch(`./__hearth_history__n=${history.length}&last=${encodeURIComponent(lastText.slice(0, 120))}`).catch(() => {});
-    }
+    const lastText = history.length ? history[history.length - 1].text : "";
+    probe(`./__hearth_history__n=${history.length}&last=${encodeURIComponent(lastText.slice(0, 120))}`);
   } catch (e) {
     // The wasm layer marks an authorization refusal with this prefix so we
     // can tell "not paired" from "desktop unreachable" (see src/wasm.rs).
@@ -179,10 +254,7 @@ async function fetchHistory() {
       chatEl.classList.remove("stale");
       history = [];
       try { localStorage.removeItem(HISTORY_KEY); } catch { /* private mode */ }
-      if (new URLSearchParams(location.search).has("probe")) {
-        fetch(`./__hearth_history__denied=1`).catch(() => {});
-      }
-      addBubble("agent", "This device is not paired with your desktop. On the desktop, run `hearth-desktop pair` and scan the QR it prints.", "error");
+      probe(`./__hearth_history__denied=1`);
       setStatus("not paired", true);
       return true;
     }
@@ -203,7 +275,7 @@ async function send(isAuto = false) {
   let outcome = { ok: false, reply: "" };
   try {
     setStatus("connecting…");
-    const stream = client.send(serverId, text);
+    const stream = client.send(serverId, text, CLIENT_VERSION);
     const reader = stream.getReader();
     let received = false;
     while (true) {
@@ -215,6 +287,7 @@ async function send(isAuto = false) {
       } else if (ev.type === "received") {
         received = true;
         pending.remove();
+        handleWarning(ev.warning);
         if (ev.error) {
           // The desktop answered but the agent failed (model down, etc.).
           addBubble("agent", `Agent error: ${ev.error}`, "error");
@@ -232,8 +305,8 @@ async function send(isAuto = false) {
         // The desktop answered and refused us: unpaired (or just revoked).
         received = true;
         pending.remove();
-        addBubble("agent", `${ev.message} On the desktop, run \`hearth-desktop pair\` and scan the QR it prints.`, "error");
         setStatus("not paired", true);
+        offerPairing();
       } else if (ev.type === "closed") {
         if (ev.error && !received) {
           // Never connected or dropped before replying: the desktop itself
@@ -251,6 +324,7 @@ async function send(isAuto = false) {
   } finally {
     sendBtn.disabled = false;
     if (isAuto) {
+      // Unconditional (not via probe()): ?auto= is itself the opt-in.
       const q = `ok=${outcome.ok ? 1 : 0}&reply=${encodeURIComponent(outcome.reply.slice(0, 200))}`;
       fetch(`./__hearth_result__${q}`).catch(() => {});
     }
@@ -283,6 +357,40 @@ function renderInline(el, text) {
   if (last < text.length) el.appendChild(document.createTextNode(text.slice(last)));
 }
 
+/* ---------------------------------------------------------------------------
+ * Updates
+ * ------------------------------------------------------------------------ */
+
+/**
+ * Register the service worker and say so when a new build takes over.
+ *
+ * The worker itself does the network-first work (see web/sw.js); this half is
+ * only about telling the user. `controllerchange` fires when a newly installed
+ * worker calls clients.claim() — at that moment the *page* is still running
+ * the code it loaded, so the honest thing to say is "reload", not to silently
+ * swap under someone's fingers mid-sentence.
+ */
+function registerServiceWorker() {
+  if (!("serviceWorker" in navigator)) return;
+  const hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    // Only a *change* is news. The first-ever registration also fires this
+    // (nothing → us), and announcing "updated" on first launch is a lie.
+    if (!hadController) return;
+    probe(`./__hearth_client__updated=1&version=${CLIENT_VERSION}`);
+    showNotice("Hearth updated in the background.", "Reload", () => location.reload());
+  });
+  navigator.serviceWorker.register("./sw.js").catch((e) => {
+    // Not fatal: without a worker the app still runs, it just loses offline
+    // start and has to rely on HTTP caching for updates. Say so in the console
+    // rather than failing the page.
+    console.warn("service worker registration failed", e);
+  });
+}
+
+/* ---------------------------------------------------------------------------
+ * Pairing
+ * ------------------------------------------------------------------------ */
 
 /** True when running as an installed home-screen app rather than a browser tab. */
 function isStandalone() {
@@ -296,57 +404,81 @@ function isIOS() {
 }
 
 /**
- * Present pairing as an explicit action instead of doing it on load.
+ * Ask for the pairing code. Shown only when the desktop has actually refused
+ * this device, so an already-paired device never sees it.
  *
- * Two reasons, one of which cost a real user a round trip:
- *
- * 1. The pairing secret is single-use. On iOS, opening the link in Safari
- *    consumed it before the user could Add to Home Screen — and an installed
- *    iOS web app gets its OWN storage, so it starts with a fresh device key and
- *    is refused. The secret was spent on the copy they did not want. Requiring a
- *    tap lets them install first and pair from the installed app.
- *
- * 2. Pairing grants a device access to everything the agent remembers about its
- *    owner. That should be a deliberate act, not something that happens because
- *    a link was opened.
+ * The code is typed rather than carried in the link on purpose: a link is an
+ * address and gets saved, cached and re-launched, and a single-use secret
+ * cannot survive that. Typing also makes granting a device access to
+ * everything the agent remembers a deliberate act rather than a side effect of
+ * opening a URL.
  */
 function offerPairing() {
-  setStatus("ready to pair");
+  if (document.getElementById("pair-form")) return; // already asking
+  setStatus("not paired", true);
+  sendBtn.disabled = true;
+
+  addBubble(
+    "agent",
+    "This device isn't paired yet.\n\nOn your desktop run `hearth-desktop pair` "
+    + "and type the code it prints below. The code is good for five minutes and "
+    + "works once.",
+  );
 
   if (isIOS() && !isStandalone()) {
     addBubble(
       "agent",
-      "Before pairing: tap Share, then Add to Home Screen, and open Hearth from "
-      + "the new icon. An installed app gets its own storage on iOS, so pairing "
-      + "here in Safari would not carry over — and only an installed app can "
-      + "receive notifications.\n\nAlready installed and reading this from the "
-      + "icon? Tap Pair below.",
+      "On iPhone, install first: tap Share, then Add to Home Screen, and open "
+      + "Hearth from the new icon. An installed app gets its own storage on iOS, "
+      + "so pairing here in Safari would not carry over — and only an installed "
+      + "app can receive notifications. The link is safe to install at any time; "
+      + "it holds no secret.",
     );
-  } else {
-    addBubble("agent", "Tap Pair to give this device access to your agent.");
   }
 
+  const wrap = document.createElement("form");
+  wrap.id = "pair-form";
+  const input = document.createElement("input");
+  input.id = "pair-code";
+  input.placeholder = "Pairing code";
+  // A phone keyboard will otherwise autocapitalise, autocorrect and offer to
+  // fill a password. The code is uppercase and unambiguous by construction
+  // (no O/0, no I/1/L), so ask for exactly that.
+  input.autocapitalize = "characters";
+  input.autocomplete = "one-time-code";
+  input.autocorrect = "off";
+  input.spellcheck = false;
+  input.maxLength = 12; // 8 characters plus separators the desktop strips
   const btn = document.createElement("button");
-  btn.textContent = "Pair this device";
-  btn.className = "pair-btn";
-  btn.onclick = async () => {
+  btn.type = "submit";
+  btn.textContent = "Pair";
+  wrap.append(input, btn);
+
+  wrap.onsubmit = async (e) => {
+    e.preventDefault();
+    const code = input.value.trim();
+    if (!code) return;
     btn.disabled = true;
+    input.disabled = true;
     setStatus("pairing…");
     try {
-      await client.pair(serverId, pairSecret, deviceName());
-      // Strip the consumed secret so a reload or bookmark cannot re-present it.
-      window.history.replaceState(null, "", location.pathname + location.search + "#" + serverId);
-      pairSecret = null;
-      btn.remove();
+      await client.pair(serverId, code, deviceName(), CLIENT_VERSION);
+      wrap.remove();
       addBubble("agent", "Paired. This device is now trusted.");
       const denied = await fetchHistory();
       if (!denied) { sendBtn.disabled = false; msgEl.focus(); }
-    } catch (e) {
+    } catch (err) {
       btn.disabled = false;
+      input.disabled = false;
+      input.select();
       setStatus("pairing failed", true);
-      addBubble("agent", `Pairing failed: ${e}\nAsk your desktop for a fresh QR (hearth-desktop pair).`, "error");
+      // The desktop's reason is the useful part (wrong code / expired / out of
+      // attempts), so show it rather than a generic failure.
+      addBubble("agent", `${String(err).replace(/^Error:\s*/, "")}`, "error");
     }
   };
-  chatEl.appendChild(btn);
-  btn.scrollIntoView({ block: "nearest" });
+
+  chatEl.appendChild(wrap);
+  wrap.scrollIntoView({ block: "nearest" });
+  input.focus();
 }
