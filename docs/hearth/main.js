@@ -46,7 +46,11 @@ function setStatus(text, isError = false) {
 function addBubble(role, text, cls = "") {
   const div = document.createElement("div");
   div.className = `msg ${role} ${cls}`.trim();
-  div.textContent = text;
+  // Render a deliberately tiny subset of markdown. Models emit **bold** and
+  // *italic* by reflex even when told not to, and raw asterisks on screen make
+  // the whole thing look broken. Built from a text node and element nodes
+  // rather than innerHTML so model output can never inject markup.
+  renderInline(div, text);
   chatEl.appendChild(div);
   chatEl.scrollTop = chatEl.scrollHeight;
   return div;
@@ -142,3 +146,26 @@ async function send(isAuto = false) {
 
 form.addEventListener("submit", (e) => { e.preventDefault(); send(); });
 main();
+
+/**
+ * Minimal, injection-safe inline markdown.
+ *
+ * Handles **bold**, *italic* and `code` only. Everything else is left as
+ * literal text. Deliberately does NOT use innerHTML: the text comes from a
+ * language model, and giving model output a path to markup would be a
+ * self-inflicted XSS.
+ */
+function renderInline(el, text) {
+  const pattern = /\*\*([^*]+)\*\*|\*([^*]+)\*|`([^`]+)`/g;
+  let last = 0;
+  let m;
+  while ((m = pattern.exec(text)) !== null) {
+    if (m.index > last) el.appendChild(document.createTextNode(text.slice(last, m.index)));
+    const tag = m[1] ? 'strong' : m[2] ? 'em' : 'code';
+    const node = document.createElement(tag);
+    node.textContent = m[1] || m[2] || m[3];
+    el.appendChild(node);
+    last = pattern.lastIndex;
+  }
+  if (last < text.length) el.appendChild(document.createTextNode(text.slice(last)));
+}
