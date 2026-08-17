@@ -75,6 +75,10 @@
     <input id="msg" placeholder="Message your agent" autocomplete="off">
     <button id="send" disabled>Send</button>
   </form>
-  <script type="module" src="./main.js"></script>
+    <!-- Versioned so a client update actually reaches installed apps. Without
+       this, Safari served a cached main.js after a fix was deployed and the
+       old behaviour persisted — invisible to both the user and the server.
+       Bump on every client change. -->
+  <script type="module" src="./main.js?v=3"></script>
 </body>
 </html>
