@@ -21,11 +21,30 @@ export class HearthClient {
      */
     history(server_id: string, limit: number): Promise<any>;
     /**
+     * Present a pairing secret (from the scanned QR fragment) to the
+     * desktop. Resolves on success — including "already paired" — and
+     * rejects with the desktop's stated reason otherwise.
+     */
+    pair(server_id: string, secret: string, name: string): Promise<void>;
+    /**
+     * The device secret to persist (hex). Never leaves the browser.
+     */
+    secret_hex(): string;
+    /**
      * Send one message to the desktop identified by `server_id`.
      * Returns a ReadableStream of progress events (see module docs).
      */
     send(server_id: string, message: string): ReadableStream;
-    static spawn(): Promise<HearthClient>;
+    /**
+     * Spawn with this device's stable key. `secret_hex` is the persisted
+     * device secret (from a previous `secret_hex()` call, kept by the page
+     * in localStorage); pass `None`/an unparseable value and a fresh key is
+     * minted — which is a fresh, unpaired device identity. The caller MUST
+     * read back `secret_hex()` and persist it, or pairing will not survive
+     * a reload (losing browser storage losing the pairing is the documented
+     * recovery story: re-scan a QR).
+     */
+    static spawn(secret_hex?: string | null): Promise<HearthClient>;
 }
 
 export class IntoUnderlyingByteSource {
@@ -65,8 +84,10 @@ export interface InitOutput {
     readonly __wbg_hearthclient_free: (a: number, b: number) => void;
     readonly hearthclient_endpoint_id: (a: number, b: number) => void;
     readonly hearthclient_history: (a: number, b: number, c: number, d: number) => number;
+    readonly hearthclient_pair: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => number;
+    readonly hearthclient_secret_hex: (a: number, b: number) => void;
     readonly hearthclient_send: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
-    readonly hearthclient_spawn: () => number;
+    readonly hearthclient_spawn: (a: number, b: number) => number;
     readonly start: () => void;
     readonly __wbg_intounderlyingbytesource_free: (a: number, b: number) => void;
     readonly __wbg_intounderlyingsink_free: (a: number, b: number) => void;
@@ -82,15 +103,15 @@ export interface InitOutput {
     readonly intounderlyingsource_cancel: (a: number) => void;
     readonly intounderlyingsource_pull: (a: number, b: number) => number;
     readonly ring_core_0_17_14__bn_mul_mont: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
-    readonly __wasm_bindgen_func_elem_14631: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_14643: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_5670: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_2387: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_7314: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_5450: (a: number, b: number) => void;
-    readonly __wasm_bindgen_func_elem_6590: (a: number, b: number) => void;
-    readonly __wasm_bindgen_func_elem_6626: (a: number, b: number) => void;
-    readonly __wasm_bindgen_func_elem_14501: (a: number, b: number) => void;
+    readonly __wasm_bindgen_func_elem_14726: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_14738: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_5765: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_2481: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_7409: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_5545: (a: number, b: number) => void;
+    readonly __wasm_bindgen_func_elem_6685: (a: number, b: number) => void;
+    readonly __wasm_bindgen_func_elem_6721: (a: number, b: number) => void;
+    readonly __wasm_bindgen_func_elem_14596: (a: number, b: number) => void;
     readonly __wbindgen_export: (a: number, b: number) => number;
     readonly __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_export3: (a: number) => void;

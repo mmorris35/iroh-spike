@@ -30,12 +30,36 @@ const msgEl = document.getElementById("msg");
 const sendBtn = document.getElementById("send");
 const form = document.getElementById("composer");
 
-/* The desktop's endpoint id: fragment preferred, ?node= accepted for
+/* The URL fragment carries the desktop's endpoint id and, on a pairing QR,
+ * a single-use pairing secret: #<id>&pair=<secret>. Both stay in the
+ * fragment so the web host never sees either. ?node= accepted for
  * compatibility with the spike's URL shape. */
+const fragment = location.hash ? location.hash.slice(1) : "";
+const [fragId, ...fragParams] = fragment.split("&");
 const serverId =
-  (location.hash ? location.hash.slice(1) : "") ||
-  new URLSearchParams(location.search).get("node") ||
-  "";
+  fragId || new URLSearchParams(location.search).get("node") || "";
+let pairSecret = null;
+for (const p of fragParams) {
+  if (p.startsWith("pair=")) pairSecret = p.slice(5);
+}
+
+/* This browser's stable device identity (its iroh secret key, hex). Created
+ * on first visit, reused on every load — the desktop's allowlist stores the
+ * public half, so losing this (clearing browser data) unpairs the device;
+ * recovery is re-scanning a QR. It never leaves this browser. */
+const DEVICE_KEY = "hearth-device-secret";
+
+/* A rough human name for the device list ("iPhone", not a UA string). */
+function deviceName() {
+  const ua = navigator.userAgent;
+  if (/iPhone/.test(ua)) return "iPhone";
+  if (/iPad/.test(ua)) return "iPad";
+  if (/Android/.test(ua)) return "Android";
+  if (/Mac/.test(ua)) return "Mac browser";
+  if (/Windows/.test(ua)) return "Windows browser";
+  if (/Linux/.test(ua)) return "Linux browser";
+  return "browser";
+}
 
 /* Display cache only (instant paint while we fetch the real transcript).
  * The desktop's copy always wins; see fetchHistory(). */
@@ -89,10 +113,32 @@ async function main() {
     setStatus("loading…");
     await init();
     setStatus("starting iroh…");
-    client = await HearthClient.spawn();
-    await fetchHistory();
-    sendBtn.disabled = false;
-    msgEl.focus();
+    let deviceSecret = null;
+    try { deviceSecret = localStorage.getItem(DEVICE_KEY); } catch { /* private mode */ }
+    client = await HearthClient.spawn(deviceSecret ?? undefined);
+    try { localStorage.setItem(DEVICE_KEY, client.secret_hex()); } catch { /* private mode: pairing won't survive reload */ }
+
+    // A pairing QR was scanned: present the secret before anything else. On
+    // success the desktop now trusts this device's key; strip the consumed
+    // secret from the URL so reloads/bookmarks don't re-present it.
+    if (pairSecret) {
+      setStatus("pairing…");
+      try {
+        await client.pair(serverId, pairSecret, deviceName());
+        window.history.replaceState(null, "", location.pathname + location.search + "#" + serverId);
+        pairSecret = null;
+      } catch (e) {
+        addBubble("agent", `Pairing failed: ${e}\nAsk your desktop for a fresh QR (hearth-desktop pair) and scan it again.`, "error");
+      }
+    }
+
+    const denied = await fetchHistory();
+    // Input stays enabled when merely offline (retrying surfaces the same
+    // failure honestly) but not when this device was refused as unpaired.
+    if (!denied) {
+      sendBtn.disabled = false;
+      msgEl.focus();
+    }
 
     const auto = new URLSearchParams(location.search).get("auto");
     if (auto) { msgEl.value = auto; send(true); }
@@ -106,7 +152,8 @@ async function main() {
  * rendered conversation, replacing whatever the cache painted. On failure the
  * cached render stays dimmed — honest about being possibly stale — and input
  * is still enabled so the user can try a message (which will surface the same
- * unreachability clearly). */
+ * unreachability clearly). Returns true if the desktop refused this device
+ * as unpaired (a different failure from "unreachable", and rendered as such). */
 async function fetchHistory() {
   setStatus("catching up…");
   try {
@@ -125,8 +172,25 @@ async function fetchHistory() {
       fetch(`./__hearth_history__n=${history.length}&last=${encodeURIComponent(lastText.slice(0, 120))}`).catch(() => {});
     }
   } catch (e) {
+    // The wasm layer marks an authorization refusal with this prefix so we
+    // can tell "not paired" from "desktop unreachable" (see src/wasm.rs).
+    if (String(e).includes("DENIED: ")) {
+      // Also drop the offline cache: a revoked device must not keep showing
+      // the conversation it used to be allowed to see.
+      chatEl.replaceChildren();
+      chatEl.classList.remove("stale");
+      history = [];
+      try { localStorage.removeItem(HISTORY_KEY); } catch { /* private mode */ }
+      if (new URLSearchParams(location.search).has("probe")) {
+        fetch(`./__hearth_history__denied=1`).catch(() => {});
+      }
+      addBubble("agent", "This device is not paired with your desktop. On the desktop, run `hearth-desktop pair` and scan the QR it prints.", "error");
+      setStatus("not paired", true);
+      return true;
+    }
     setStatus("couldn't catch up — is your desktop running?", true);
   }
+  return false;
 }
 
 async function send(isAuto = false) {
@@ -166,6 +230,12 @@ async function send(isAuto = false) {
           // is reachable again — fetch the real transcript now.
           if (!historySynced) fetchHistory();
         }
+      } else if (ev.type === "denied") {
+        // The desktop answered and refused us: unpaired (or just revoked).
+        received = true;
+        pending.remove();
+        addBubble("agent", `${ev.message} On the desktop, run \`hearth-desktop pair\` and scan the QR it prints.`, "error");
+        setStatus("not paired", true);
       } else if (ev.type === "closed") {
         if (ev.error && !received) {
           // Never connected or dropped before replying: the desktop itself
