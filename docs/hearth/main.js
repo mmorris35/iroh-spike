@@ -118,13 +118,19 @@ async function main() {
     client = await HearthClient.spawn(deviceSecret ?? undefined);
     try { localStorage.setItem(DEVICE_KEY, client.secret_hex()); } catch { /* private mode: pairing won't survive reload */ }
 
-    // A pairing QR was scanned. Do NOT pair automatically — see offerPairing().
-    if (pairSecret) {
+    // Try the connection FIRST, then decide whether pairing is even needed.
+    //
+    // An installed iOS web app relaunches its *saved* start URL every time, and
+    // that URL still contains the pairing fragment from installation —
+    // history.replaceState only rewrites the live session, never the saved
+    // shortcut. Offering to pair whenever a secret is present therefore nagged
+    // on every single launch, forever. Whether this device is already trusted is
+    // a question only the desktop can answer, so ask it.
+    const denied = await fetchHistory();
+    if (denied && pairSecret) {
       offerPairing();
       return;
     }
-
-    const denied = await fetchHistory();
     // Input stays enabled when merely offline (retrying surfaces the same
     // failure honestly) but not when this device was refused as unpaired.
     if (!denied) {
