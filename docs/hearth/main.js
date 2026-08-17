@@ -118,18 +118,10 @@ async function main() {
     client = await HearthClient.spawn(deviceSecret ?? undefined);
     try { localStorage.setItem(DEVICE_KEY, client.secret_hex()); } catch { /* private mode: pairing won't survive reload */ }
 
-    // A pairing QR was scanned: present the secret before anything else. On
-    // success the desktop now trusts this device's key; strip the consumed
-    // secret from the URL so reloads/bookmarks don't re-present it.
+    // A pairing QR was scanned. Do NOT pair automatically — see offerPairing().
     if (pairSecret) {
-      setStatus("pairing…");
-      try {
-        await client.pair(serverId, pairSecret, deviceName());
-        window.history.replaceState(null, "", location.pathname + location.search + "#" + serverId);
-        pairSecret = null;
-      } catch (e) {
-        addBubble("agent", `Pairing failed: ${e}\nAsk your desktop for a fresh QR (hearth-desktop pair) and scan it again.`, "error");
-      }
+      offerPairing();
+      return;
     }
 
     const denied = await fetchHistory();
@@ -283,4 +275,72 @@ function renderInline(el, text) {
     last = pattern.lastIndex;
   }
   if (last < text.length) el.appendChild(document.createTextNode(text.slice(last)));
+}
+
+
+/** True when running as an installed home-screen app rather than a browser tab. */
+function isStandalone() {
+  return window.navigator.standalone === true
+    || window.matchMedia("(display-mode: standalone)").matches;
+}
+
+function isIOS() {
+  return /iPad|iPhone|iPod/.test(navigator.userAgent)
+    || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+}
+
+/**
+ * Present pairing as an explicit action instead of doing it on load.
+ *
+ * Two reasons, one of which cost a real user a round trip:
+ *
+ * 1. The pairing secret is single-use. On iOS, opening the link in Safari
+ *    consumed it before the user could Add to Home Screen — and an installed
+ *    iOS web app gets its OWN storage, so it starts with a fresh device key and
+ *    is refused. The secret was spent on the copy they did not want. Requiring a
+ *    tap lets them install first and pair from the installed app.
+ *
+ * 2. Pairing grants a device access to everything the agent remembers about its
+ *    owner. That should be a deliberate act, not something that happens because
+ *    a link was opened.
+ */
+function offerPairing() {
+  setStatus("ready to pair");
+
+  if (isIOS() && !isStandalone()) {
+    addBubble(
+      "agent",
+      "Before pairing: tap Share, then Add to Home Screen, and open Hearth from "
+      + "the new icon. An installed app gets its own storage on iOS, so pairing "
+      + "here in Safari would not carry over — and only an installed app can "
+      + "receive notifications.\n\nAlready installed and reading this from the "
+      + "icon? Tap Pair below.",
+    );
+  } else {
+    addBubble("agent", "Tap Pair to give this device access to your agent.");
+  }
+
+  const btn = document.createElement("button");
+  btn.textContent = "Pair this device";
+  btn.className = "pair-btn";
+  btn.onclick = async () => {
+    btn.disabled = true;
+    setStatus("pairing…");
+    try {
+      await client.pair(serverId, pairSecret, deviceName());
+      // Strip the consumed secret so a reload or bookmark cannot re-present it.
+      window.history.replaceState(null, "", location.pathname + location.search + "#" + serverId);
+      pairSecret = null;
+      btn.remove();
+      addBubble("agent", "Paired. This device is now trusted.");
+      const denied = await fetchHistory();
+      if (!denied) { sendBtn.disabled = false; msgEl.focus(); }
+    } catch (e) {
+      btn.disabled = false;
+      setStatus("pairing failed", true);
+      addBubble("agent", `Pairing failed: ${e}\nAsk your desktop for a fresh QR (hearth-desktop pair).`, "error");
+    }
+  };
+  chatEl.appendChild(btn);
+  btn.scrollIntoView({ block: "nearest" });
 }
