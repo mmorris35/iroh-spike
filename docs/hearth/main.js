@@ -214,6 +214,32 @@ function addBubble(role, text, cls = "") {
   return div;
 }
 
+// A turn can run for minutes while the agent reads files or runs tools, and a
+// still "…" looks the same as a hung one. The dots say it is alive; the counter
+// says for how long. Same remove() as a bubble, so every exit path in send()
+// already cleans it up.
+function addWorking() {
+  const div = document.createElement("div");
+  div.className = "msg agent pending";
+  const dots = document.createElement("span");
+  dots.className = "dots";
+  for (let i = 0; i < 3; i++) dots.appendChild(document.createElement("i"));
+  const label = document.createElement("span");
+  div.append(dots, label);
+  chatEl.appendChild(div);
+  chatEl.scrollTop = chatEl.scrollHeight;
+  const start = Date.now();
+  const tick = () => { label.textContent = `working ${elapsed(Date.now() - start)}`; };
+  tick();
+  const timer = setInterval(tick, 1000);
+  return { remove() { clearInterval(timer); div.remove(); } };
+}
+
+function elapsed(ms) {
+  const s = Math.floor(ms / 1000);
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
 function saveHistory(role, text) {
   history.push({ role, text });
   // Cap the display cache; the desktop holds the real transcript.
@@ -321,7 +347,7 @@ async function send(isAuto = false) {
   sendBtn.disabled = true;
   addBubble("user", text);
   saveHistory("user", text);
-  const pending = addBubble("agent", "…", "pending");
+  const pending = addWorking();
 
   let outcome = { ok: false, reply: "" };
   try {
@@ -373,6 +399,9 @@ async function send(isAuto = false) {
     addBubble("agent", `Send failed: ${e}`, "error");
     setStatus("error", true);
   } finally {
+    // Safety net for a stream that closes cleanly without an outcome: the
+    // branches above remove it in order, and a second remove() is a no-op.
+    pending.remove();
     sendBtn.disabled = false;
     if (isAuto) {
       // Unconditional (not via probe()): ?auto= is itself the opt-in.
