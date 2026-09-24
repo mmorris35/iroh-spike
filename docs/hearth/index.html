@@ -48,6 +48,35 @@
     header h1 { font-size: 1.05rem; color: #e8a44c; }
     #status { font-size: 0.75rem; color: #8d8474; }
     #status.err { color: #e06c5b; }
+    #switch {
+      margin-left: auto; font-size: 0.8rem; font-weight: 600;
+      padding: 4px 10px; border-radius: 12px;
+      background: #2a2620; color: #ece5da;
+      flex-shrink: 0; max-width: 45%; white-space: nowrap;
+      overflow: hidden; text-overflow: ellipsis;
+    }
+    /* Which desktop this phone is talking to. A list, not a single address:
+       one per Windows user or per machine. */
+    #desktops {
+      margin: 0 16px 8px; padding: 6px; border-radius: 10px;
+      background: #221e18; display: flex; flex-direction: column; gap: 2px;
+    }
+    #desktops[hidden] { display: none; }
+    .menu-item {
+      text-align: left; font-size: 0.9rem; font-weight: 500;
+      padding: 10px 12px; border-radius: 8px;
+      background: transparent; color: #ece5da;
+    }
+    .menu-item.current { color: #e8a44c; }
+    .menu-item.action { color: #8d8474; }
+    /* The switcher's in-page dialog (main.js ask()). The global form rule is
+       for the composer, so undo its flex row and safe-area padding here. */
+    #desktops form.ask { display: block; padding: 8px 6px; }
+    .ask p { font-size: 0.9rem; line-height: 1.4; margin-bottom: 10px; }
+    .ask input { width: 100%; margin-bottom: 10px; }
+    .ask-row { display: flex; justify-content: flex-end; gap: 8px; }
+    .ask-row button { padding: 8px 18px; }
+    .ask-row .ask-cancel { background: transparent; color: #8d8474; }
     /* Statements about the code the user is running ("updated", "out of
        date"). Deliberately outside the conversation: it is not something the
        agent said, and it must not scroll away. */
@@ -99,7 +128,9 @@
   <header>
     <h1>Hearth</h1>
     <span id="status">loading…</span>
+    <button id="switch" type="button">Desktops ▾</button>
   </header>
+  <div id="desktops" hidden></div>
   <div id="notice" hidden></div>
   <div id="chat"></div>
   <form id="composer">

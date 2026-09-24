@@ -63,6 +63,8 @@ const msgEl = document.getElementById("msg");
 const sendBtn = document.getElementById("send");
 const form = document.getElementById("composer");
 const noticeEl = document.getElementById("notice");
+const switchBtn = document.getElementById("switch");
+const menuEl = document.getElementById("desktops");
 
 const probing = new URLSearchParams(location.search).has("probe");
 /** Report to the dev server's log (a deliberate 404). No-op-ish in production. */
@@ -72,15 +74,26 @@ function probe(path) {
 probe(`./__hearth_client__version=${CLIENT_VERSION}&controlled=${navigator.serviceWorker?.controller ? 1 : 0}`);
 
 /* ---------------------------------------------------------------------------
- * The desktop's address
+ * The desktop's address, and the other desktops this phone knows
  *
  * Resolution order: URL fragment → ?node= (the spike's shape) → the last
  * address this browser successfully used. The localStorage fallback matters
  * because a launcher, a share sheet or a stripped bookmark can drop a
  * fragment, and losing the address should not look like a broken app. It is
  * safe to persist precisely because it is not a credential.
+ *
+ * One phone can talk to several desktops — one per Windows user, or one per
+ * machine; each is its own agent with its own allowlist, and this device's key
+ * is simply paired with each. Every address this browser has used is kept in
+ * a list so the header can switch between them. On iOS the list is the only
+ * way an installed app reaches a second desktop at all: the app has its own
+ * storage, and tapping a link opens Safari rather than the app, so "Add a
+ * desktop" takes a pasted link. Switching reloads the page on the other
+ * address instead of swapping state in place — everything below assumes one
+ * serverId per page load, and a reload keeps that true.
  * ------------------------------------------------------------------------ */
-const SERVER_KEY = "hearth-server-id";
+const SERVER_KEY = "hearth-server-id"; // the one used last
+const SERVERS_KEY = "hearth-servers";  // [{id, name}], in the order added
 const fragment = location.hash ? location.hash.slice(1) : "";
 /* Tolerate (and discard) any leftover &pair=… from a pre-0.3 QR still living
  * in someone's saved start URL: the id is the part before the first '&'. */
@@ -91,6 +104,44 @@ const serverId =
   fragId || new URLSearchParams(location.search).get("node") || stored || "";
 if (serverId && serverId !== stored) {
   try { localStorage.setItem(SERVER_KEY, serverId); } catch { /* private mode */ }
+}
+
+let servers = null;
+try { servers = JSON.parse(localStorage.getItem(SERVERS_KEY)); } catch { /* corrupt */ }
+/* A phone from before the list existed knows exactly one desktop: the stored
+ * one. It is kept even when this load is for a different desktop. Only on that
+ * first run — afterwards the list is the record, and a desktop removed from it
+ * must stay removed. */
+if (!Array.isArray(servers)) servers = stored ? [{ id: stored, name: "" }] : [];
+servers = servers.filter((s) => s && typeof s.id === "string" && s.id);
+if (serverId && !servers.some((s) => s.id === serverId)) servers.push({ id: serverId, name: "" });
+saveServers();
+
+function saveServers() {
+  try { localStorage.setItem(SERVERS_KEY, JSON.stringify(servers)); } catch { /* private mode */ }
+}
+
+/* Until it is renamed, a desktop is called by the start of its id — the same
+ * characters the owner can see at the end of its link. */
+function serverName(s) {
+  return s.name || `Desktop ${s.id.slice(0, 6)}`;
+}
+
+/* The endpoint id out of whatever was pasted: the full link, the fragment, or
+ * the bare id. Only a shape check — the wasm parses it properly on connect. */
+function parseAddress(text) {
+  const t = text.trim();
+  const id = (t.includes("#") ? t.slice(t.indexOf("#") + 1) : t).split("&")[0].trim();
+  return /^[0-9A-Za-z]{16,}$/.test(id) ? id : "";
+}
+
+/* Load the page on another desktop's address. `window.history`, because
+ * `history` below is the chat cache. Only the fragment changes, which by itself
+ * would not reload — hence the explicit reload. Query parameters are dropped so
+ * a test hook like ?auto= cannot fire again against the new desktop. */
+function openServer(id) {
+  window.history.replaceState(null, "", `${location.pathname}#${id}`);
+  location.reload();
 }
 
 /* This browser's stable device identity (its iroh secret key, hex). Created
@@ -175,7 +226,7 @@ async function main() {
 
   if (!serverId) {
     setStatus("no desktop id in URL", true);
-    addBubble("agent", "This link is missing the desktop's id. Open the exact link (or QR) that hearth-desktop printed — it ends with #<endpoint-id>.", "error");
+    addBubble("agent", "This link is missing the desktop's id. Open the exact link (or QR) your desktop shows — it ends with #<endpoint-id> — or tap Desktops above and paste it.", "error");
     return;
   }
   // Instant paint from the offline cache — visibly provisional (dimmed via
@@ -332,7 +383,137 @@ async function send(isAuto = false) {
 }
 
 form.addEventListener("submit", (e) => { e.preventDefault(); send(); });
+switchBtn.addEventListener("click", toggleDesktops);
+renderSwitcher();
 main();
+
+/* ---------------------------------------------------------------------------
+ * Switching desktops
+ * ------------------------------------------------------------------------ */
+
+function renderSwitcher() {
+  const current = servers.find((s) => s.id === serverId);
+  switchBtn.textContent = `${current ? serverName(current) : "Desktops"} ▾`;
+}
+
+function menuButton(label, cls, onclick) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = `menu-item ${cls}`.trim();
+  b.textContent = label;
+  b.onclick = onclick;
+  return b;
+}
+
+function toggleDesktops() {
+  if (!menuEl.hidden) { menuEl.hidden = true; return; }
+  menuEl.replaceChildren();
+  for (const s of servers) {
+    const here = s.id === serverId;
+    menuEl.appendChild(menuButton(
+      `${here ? "✓ " : ""}${serverName(s)}`,
+      here ? "current" : "",
+      () => { if (here) menuEl.hidden = true; else openServer(s.id); },
+    ));
+  }
+  menuEl.appendChild(menuButton("Add a desktop…", "action", addDesktop));
+  const current = servers.find((s) => s.id === serverId);
+  if (current) {
+    menuEl.appendChild(menuButton("Rename this one…", "action", () => renameDesktop(current)));
+    menuEl.appendChild(menuButton("Remove this one…", "action", () => removeDesktop(current)));
+  }
+  menuEl.hidden = false;
+}
+
+/**
+ * The switcher's own dialog, drawn in the menu panel. Not prompt()/confirm():
+ * installed iOS home-screen apps have a history of making the native dialogs
+ * return at once, which would leave add, rename and remove dead on exactly
+ * the platform they exist for — while every Chromium test still passed.
+ *
+ * With `value` it asks for text and resolves to what was typed; without, it
+ * asks yes/no and resolves to true. Cancel resolves to null.
+ */
+function ask(message, { value = null, okLabel = "OK" } = {}) {
+  return new Promise((resolve) => {
+    const f = document.createElement("form");
+    f.className = "ask";
+    const p = document.createElement("p");
+    p.textContent = message;
+    f.appendChild(p);
+    let input = null;
+    if (value !== null) {
+      input = document.createElement("input");
+      input.value = value;
+      input.autocapitalize = "off";
+      input.autocomplete = "off";
+      input.autocorrect = "off";
+      input.spellcheck = false;
+      f.appendChild(input);
+    }
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "ask-cancel";
+    cancel.textContent = "Cancel";
+    const ok = document.createElement("button");
+    ok.type = "submit";
+    ok.textContent = okLabel;
+    const row = document.createElement("div");
+    row.className = "ask-row";
+    row.append(cancel, ok);
+    f.appendChild(row);
+    const done = (answer) => { menuEl.hidden = true; menuEl.replaceChildren(); resolve(answer); };
+    cancel.onclick = () => done(null);
+    f.onsubmit = (e) => { e.preventDefault(); done(input ? input.value : true); };
+    menuEl.replaceChildren(f);
+    menuEl.hidden = false;
+    (input || ok).focus();
+  });
+}
+
+async function addDesktop() {
+  let message = "Paste the Hearth link from the other desktop:";
+  let text = "";
+  let id = "";
+  while (!id) {
+    text = await ask(message, { value: text, okLabel: "Add" });
+    if (text === null) return;
+    id = parseAddress(text);
+    message = "That doesn't look like a Hearth link. It ends with # and a long id. Paste it again:";
+  }
+  if (!servers.some((s) => s.id === id)) {
+    servers.push({ id, name: "" });
+    saveServers();
+  }
+  openServer(id);
+}
+
+async function renameDesktop(s) {
+  const name = await ask("Name this desktop:", { value: s.name || serverName(s), okLabel: "Save" });
+  if (name === null) return;
+  s.name = name.trim().slice(0, 40);
+  saveServers();
+  renderSwitcher();
+}
+
+/* Forgetting a desktop here does not unpair this phone — the desktop's
+ * allowlist is the authority on that, and only revoking there removes it. */
+async function removeDesktop(s) {
+  const sure = await ask(
+    `Remove "${serverName(s)}" from this phone? The desktop still trusts this phone until you revoke it there.`,
+    { okLabel: "Remove" },
+  );
+  if (!sure) return;
+  servers = servers.filter((x) => x.id !== s.id);
+  saveServers();
+  try { localStorage.removeItem(`hearth-history-${s.id}`); } catch { /* private mode */ }
+  // The last-used fallback must not point at what was just removed, or a
+  // launch without a fragment would open (and re-list) it.
+  try { localStorage.removeItem(SERVER_KEY); } catch { /* private mode */ }
+  if (servers.length) { openServer(servers[0].id); return; }
+  window.history.replaceState(null, "", location.pathname);
+  location.reload();
+}
 
 /**
  * Minimal, injection-safe inline markdown.
