@@ -563,7 +563,7 @@ async function resyncPush() {
  * With `value` it asks for text and resolves to what was typed; without, it
  * asks yes/no and resolves to true. Cancel resolves to null.
  */
-function ask(message, { value = null, okLabel = "OK" } = {}) {
+function ask(message, { value = null, okLabel = "OK", alt = null } = {}) {
   return new Promise((resolve) => {
     const f = document.createElement("form");
     f.className = "ask";
@@ -590,9 +590,19 @@ function ask(message, { value = null, okLabel = "OK" } = {}) {
     const row = document.createElement("div");
     row.className = "ask-row";
     row.append(cancel, ok);
+    // `alt`: a third answer, e.g. "Scan QR" instead of typing.
+    let altBtn = null;
+    if (alt) {
+      altBtn = document.createElement("button");
+      altBtn.type = "button";
+      altBtn.className = "ask-alt";
+      altBtn.textContent = alt.label;
+      row.prepend(altBtn);
+    }
     f.appendChild(row);
     const done = (answer) => { menuEl.hidden = true; menuEl.replaceChildren(); resolve(answer); };
     cancel.onclick = () => done(null);
+    if (altBtn) altBtn.onclick = () => done(alt.value);
     f.onsubmit = (e) => { e.preventDefault(); done(input ? input.value : true); };
     menuEl.replaceChildren(f);
     menuEl.hidden = false;
@@ -601,20 +611,147 @@ function ask(message, { value = null, okLabel = "OK" } = {}) {
 }
 
 async function addDesktop() {
-  let message = "Paste the Hearth link from the other desktop:";
+  const scan = canScan() ? { label: "Scan QR", value: SCAN } : null;
+  let message = scan
+    ? "Scan the QR code in the other desktop's Settings, or paste its Hearth link:"
+    : "Paste the Hearth link from the other desktop:";
   let text = "";
   let id = "";
   while (!id) {
-    text = await ask(message, { value: text, okLabel: "Add" });
-    if (text === null) return;
+    const got = await ask(message, { value: text, okLabel: "Add", alt: scan });
+    if (got === null) return;
+    if (got === SCAN) {
+      const scanned = await scanQR();
+      if (scanned === null) continue; // cancelled: back to the dialog as it was
+      if (typeof scanned !== "string") {
+        message = `The camera isn't available here (${scanned.error?.name || scanned.error}). Paste the link instead:`;
+        continue;
+      }
+      text = scanned;
+    } else {
+      text = got;
+    }
     id = parseAddress(text);
-    message = "That doesn't look like a Hearth link. It ends with # and a long id. Paste it again:";
+    if (!id) {
+      message = looksLikePairingCode(text)
+        ? "That's a pairing code, and it comes next. First add the desktop: scan its QR code or paste its link."
+        : "That doesn't look like a Hearth link. It ends with # and a long id. Try again:";
+    }
   }
   if (!servers.some((s) => s.id === id)) {
     servers.push({ id, name: "" });
     saveServers();
   }
   openServer(id);
+}
+
+/*
+ * Adding a desktop by QR, from inside the app. Most phones share no clipboard
+ * with the computer, and nobody should type a 64-character id. The phone's own
+ * camera is no help either: on iOS it opens the link in Safari, whose storage
+ * is not the Home Screen app's, so a desktop added there never arrives here.
+ * BarcodeDetector where the browser has it (Chrome, Android); otherwise jsQR
+ * (web/vendor, Apache-2.0), loaded only the first time someone scans.
+ */
+const SCAN = Symbol("scan");
+
+function canScan() {
+  return !!navigator.mediaDevices?.getUserMedia;
+}
+
+/** The desktop's typed code alphabet (src/devices.rs ALPHABET), 8 long. */
+function looksLikePairingCode(text) {
+  return /^[2-9A-HJKMNP-Z]{8}$/.test(text.toUpperCase().replace(/[^0-9A-Z]/g, ""));
+}
+
+let jsQRLoad = null;
+function loadJsQR() {
+  jsQRLoad ??= new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = `./vendor/jsQR.js?v=${CLIENT_VERSION}`;
+    s.onload = () => resolve(window.jsQR?.default || window.jsQR);
+    s.onerror = () => { jsQRLoad = null; reject(new Error("could not load the QR reader")); };
+    document.head.appendChild(s);
+  });
+  return jsQRLoad;
+}
+
+/* Resolves to the scanned Hearth link, to null if cancelled, or to {error} if
+ * the camera could not be used. Only a QR that parses as a Hearth address ends
+ * the scan, so a stray code in the frame is reported and ignored. */
+function scanQR() {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.className = "scan";
+    const video = document.createElement("video");
+    video.muted = true;
+    video.playsInline = true;
+    video.setAttribute("playsinline", ""); // iOS: without it, video goes fullscreen
+    const hint = document.createElement("p");
+    hint.textContent = "Point the camera at the QR code in the desktop's Settings.";
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.textContent = "Cancel";
+    overlay.append(video, hint, cancel);
+    document.body.appendChild(overlay);
+
+    let stream = null;
+    let timer = null;
+    let finished = false;
+    const finish = (value) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      stream?.getTracks().forEach((t) => t.stop());
+      overlay.remove();
+      resolve(value);
+    };
+    cancel.onclick = () => finish(null);
+
+    (async () => {
+      try {
+        const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
+        if (finished) { s.getTracks().forEach((t) => t.stop()); return; }
+        stream = s;
+        video.srcObject = stream;
+        await video.play();
+        const detector = "BarcodeDetector" in window ? new BarcodeDetector({ formats: ["qr_code"] }) : null;
+        const decode = detector ? null : await loadJsQR();
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d", { willReadFrequently: true });
+        const tick = async () => {
+          if (finished) return;
+          let text = null;
+          if (video.videoWidth) {
+            if (detector) {
+              const codes = await detector.detect(video).catch(() => []);
+              if (finished) return; // cancelled during the await
+              text = codes[0]?.rawValue ?? null;
+            } else {
+              // 640 px across is plenty for a QR on a screen, and keeps a
+              // phone's decode loop cheap.
+              const scale = Math.min(1, 640 / video.videoWidth);
+              canvas.width = Math.round(video.videoWidth * scale);
+              canvas.height = Math.round(video.videoHeight * scale);
+              ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+              const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+              // Both: the desktop window may be in dark mode, which inverts it.
+              text = decode(img.data, img.width, img.height, { inversionAttempts: "attemptBoth" })?.data ?? null;
+            }
+          }
+          // A scan must be a Hearth link (#id), not just any long token:
+          // stray QRs are what a camera sees, and a bare product code would
+          // otherwise add a desktop that can never connect (Bilby, #14).
+          if (text && text.includes("#") && parseAddress(text)) { finish(text); return; }
+          if (text) hint.textContent = "That QR isn't a Hearth link. Point at the one in the desktop's Settings.";
+          timer = setTimeout(tick, 150);
+        };
+        tick();
+      } catch (error) {
+        finish({ error });
+      }
+    })();
+  });
 }
 
 async function renameDesktop(s) {

@@ -77,6 +77,15 @@
     .ask-row { display: flex; justify-content: flex-end; gap: 8px; }
     .ask-row button { padding: 8px 18px; }
     .ask-row .ask-cancel { background: transparent; color: #8d8474; }
+    .ask-row .ask-alt { margin-right: auto; background: transparent; border: 1px solid #5a5244; color: #ece5da; }
+    .scan {
+      position: fixed; inset: 0; z-index: 100; background: #000;
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+      padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
+    }
+    .scan video { width: 100%; max-width: 520px; max-height: 65vh; object-fit: cover; border-radius: 12px; background: #111; }
+    .scan p { color: #ece5da; text-align: center; font-size: 0.95rem; max-width: 520px; }
+    .scan button { padding: 10px 28px; }
     /* Statements about the code the user is running ("updated", "out of
        date"). Deliberately outside the conversation: it is not something the
        agent said, and it must not scroll away. */
