@@ -36,7 +36,7 @@
  * VERSION is stamped by scripts/set-client-version.sh alongside web/main.js
  * and src/version.rs. Bumping it invalidates both caches.
  */
-const VERSION = "0.3.1";
+const VERSION = "0.4.0";
 const SHELL_CACHE = `hearth-shell-${VERSION}`;
 const WASM_CACHE = `hearth-wasm-${VERSION}`;
 
@@ -148,6 +148,39 @@ async function cacheFirst(request) {
   if (response && response.ok) await cache.put(request, response.clone());
   return response;
 }
+
+/* Push. Safari 18.4+ reads the payload as Declarative Web Push and can show it
+ * without this handler; everything else (Android Chrome, older Safari) needs
+ * it. It must always show something: Safari ends a subscription whose pushes
+ * arrive and show nothing. */
+self.addEventListener("push", (event) => {
+  let n = {};
+  try { n = event.data?.json()?.notification ?? {}; } catch { /* not JSON */ }
+  event.waitUntil(
+    self.registration.showNotification(n.title || "Hearth", {
+      body: n.body || "Your reply is ready.",
+      icon: "./icon-192.png",
+      data: { navigate: n.navigate },
+    }),
+  );
+});
+
+/* Tapping it opens the app on the desktop that sent it. */
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const url = event.notification.data?.navigate || self.registration.scope;
+  event.waitUntil(
+    (async () => {
+      const open = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+      if (open.length) {
+        const c = open[0];
+        await c.navigate?.(url).catch(() => {});
+        return c.focus();
+      }
+      return self.clients.openWindow(url);
+    })(),
+  );
+});
 
 /* Lets the page ask which build is actually serving it — used by the update
  * notice and by the headless propagation test. */

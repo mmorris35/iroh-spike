@@ -38,7 +38,7 @@
  * artefact, not three numbers to keep in your head. Reported to the desktop on
  * every request so "your client is stale" can be *said* rather than inferred
  * from behaviour nobody shipped. */
-const CLIENT_VERSION = "0.3.1";
+const CLIENT_VERSION = "0.4.0";
 /* Exposed so "which build is this phone actually running?" is answerable from
  * a console or a remote inspector without reading source. The whole class of
  * bug this file was reworked to fix was invisible precisely because nobody
@@ -280,6 +280,9 @@ async function main() {
       offerPairing();
       return;
     }
+    // Endpoints rotate silently, so the desktop is handed this browser's
+    // subscription again on every open (R7.5). Not awaited: chat is ready now.
+    resyncPush();
     // Input stays enabled when merely offline (retrying surfaces the same
     // failure honestly).
     sendBtn.disabled = false;
@@ -450,8 +453,105 @@ function toggleDesktops() {
   if (current) {
     menuEl.appendChild(menuButton("Rename this one…", "action", () => renameDesktop(current)));
     menuEl.appendChild(menuButton("Remove this one…", "action", () => removeDesktop(current)));
+    if (!pushSupported()) {
+      const b = menuButton("Notifications need Hearth on your Home Screen", "action", null);
+      b.disabled = true;
+      menuEl.appendChild(b);
+    } else if (pushOnHere()) {
+      menuEl.appendChild(menuButton("✓ Notifications on (turn off)", "action", disableNotifications));
+    } else {
+      menuEl.appendChild(menuButton("Turn on notifications", "action", enableNotifications));
+    }
   }
   menuEl.hidden = false;
+}
+
+/*
+ * Notifications (docs/ENGINEERING_REQUIREMENTS.md §7). The desktop is the push
+ * server: it hands over its VAPID key, the browser subscribes with it, and the
+ * subscription goes back to the desktop over iroh. The desktop pushes only a
+ * reply this phone did not read live.
+ *
+ * A browser holds one push subscription per site, bound to one desktop's key,
+ * so notifications come from one desktop at a time: the last one they were
+ * turned on for. iOS offers PushManager only to a Home Screen app.
+ */
+const PUSH_KEY = "hearth-push-server";
+
+function pushSupported() {
+  return "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+}
+
+function pushServer() {
+  try { return localStorage.getItem(PUSH_KEY); } catch { return null; }
+}
+
+function pushOnHere() {
+  return pushSupported() && Notification.permission === "granted" && pushServer() === serverId;
+}
+
+function b64urlBytes(s) {
+  const bin = atob(s.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((s.length + 3) % 4));
+  return Uint8Array.from(bin, (c) => c.charCodeAt(0));
+}
+
+function sameKey(buffer, bytes) {
+  if (!buffer) return false;
+  const a = new Uint8Array(buffer);
+  return a.length === bytes.length && a.every((x, i) => x === bytes[i]);
+}
+
+async function sendSubscription(sub) {
+  const j = sub.toJSON();
+  await client.subscribe(serverId, j.endpoint, j.keys.p256dh, j.keys.auth, CLIENT_VERSION);
+}
+
+async function enableNotifications() {
+  menuEl.hidden = true;
+  if (!client) { setStatus("still starting — try again in a moment", true); return; }
+  // The permission prompt first, while this is still the tap: iOS shows it
+  // only from a user gesture, and any await before it spends the gesture.
+  const permission = await Notification.requestPermission();
+  if (permission !== "granted") { setStatus("notifications not allowed", true); return; }
+  try {
+    setStatus("turning notifications on…");
+    const key = b64urlBytes(await client.pushKey(serverId, CLIENT_VERSION));
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    // Bound to another desktop's key: that desktop loses notifications, and
+    // finds out from the push service the next time it tries.
+    if (sub && !sameKey(sub.options?.applicationServerKey, key)) { await sub.unsubscribe(); sub = null; }
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+    await sendSubscription(sub);
+    try { localStorage.setItem(PUSH_KEY, serverId); } catch { /* private mode */ }
+    setStatus("notifications on");
+  } catch (e) {
+    setStatus("could not turn notifications on", true);
+    addBubble("agent", `Notifications: ${e}`, "error");
+  }
+}
+
+async function disableNotifications() {
+  menuEl.hidden = true;
+  // The desktop keeps the old subscription until its next push comes back
+  // 410, and then forgets it. Nothing to tell it now.
+  try {
+    const sub = await (await navigator.serviceWorker.ready).pushManager.getSubscription();
+    if (sub) await sub.unsubscribe();
+  } catch { /* already gone */ }
+  try { localStorage.removeItem(PUSH_KEY); } catch { /* private mode */ }
+  setStatus("notifications off");
+}
+
+async function resyncPush() {
+  if (!pushOnHere()) return;
+  try {
+    const sub = await (await navigator.serviceWorker.ready).pushManager.getSubscription();
+    // Safari clearing site data takes the subscription with it; show the
+    // switch as off so turning it back on is one tap.
+    if (sub) await sendSubscription(sub);
+    else localStorage.removeItem(PUSH_KEY);
+  } catch { /* the next open tries again */ }
 }
 
 /**
