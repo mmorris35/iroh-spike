@@ -168,7 +168,10 @@ self.addEventListener("push", (event) => {
 /* Tapping it opens the app on the desktop that sent it. */
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  const url = event.notification.data?.navigate || self.registration.scope;
+  // ?via=push marks a deep link, so the app opens the desktop that sent it and
+  // not the last one used (main.js).
+  let url = event.notification.data?.navigate || self.registration.scope;
+  try { const u = new URL(url, self.registration.scope); u.searchParams.set("via", "push"); url = u.href; } catch { /* keep as is */ }
   event.waitUntil(
     (async () => {
       const open = await self.clients.matchAll({ type: "window", includeUncontrolled: true });

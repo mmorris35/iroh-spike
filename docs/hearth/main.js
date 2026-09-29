@@ -100,14 +100,33 @@ const fragment = location.hash ? location.hash.slice(1) : "";
 const fragId = fragment.split("&")[0];
 let stored = null;
 try { stored = localStorage.getItem(SERVER_KEY); } catch { /* private mode */ }
-const serverId =
-  fragId || new URLSearchParams(location.search).get("node") || stored || "";
+let servers = null;
+try { servers = JSON.parse(localStorage.getItem(SERVERS_KEY)); } catch { /* corrupt */ }
+
+/* An installed app always launches the URL it was installed from, so on a
+ * cold launch its fragment names the FIRST desktop, not the one last used, and
+ * every launch reverted to it (Mike, 2026-09-26). So an installed app's cold
+ * launch opens the last-used desktop instead. The fragment still wins for a
+ * switch inside the app (openServer marks it), for a tapped notification
+ * (?via=push), and in a browser tab, where the URL is what was just opened. */
+const installed = window.matchMedia?.("(display-mode: standalone)").matches || navigator.standalone === true;
+let switching = false;
+try { switching = sessionStorage.getItem("hearth-switching") === "1"; sessionStorage.removeItem("hearth-switching"); } catch { /* private mode */ }
+const deepLink = new URLSearchParams(location.search).has("via");
+const known = Array.isArray(servers) && servers.some((s) => s && s.id === stored);
+const launchLast = installed && !switching && !deepLink && fragId && stored && stored !== fragId && known;
+if (launchLast) window.history.replaceState(null, "", `${location.pathname}#${stored}`);
+// ?via has done its job once read: drop it, so the address bar stays the
+// plain desktop URL (Bilby's review of #17), as openServer does with ?auto=.
+else if (deepLink) window.history.replaceState(null, "", `${location.pathname}${location.hash}`);
+
+const serverId = launchLast
+  ? stored
+  : fragId || new URLSearchParams(location.search).get("node") || stored || "";
 if (serverId && serverId !== stored) {
   try { localStorage.setItem(SERVER_KEY, serverId); } catch { /* private mode */ }
 }
 
-let servers = null;
-try { servers = JSON.parse(localStorage.getItem(SERVERS_KEY)); } catch { /* corrupt */ }
 /* A phone from before the list existed knows exactly one desktop: the stored
  * one. It is kept even when this load is for a different desktop. Only on that
  * first run — afterwards the list is the record, and a desktop removed from it
@@ -140,6 +159,8 @@ function parseAddress(text) {
  * would not reload — hence the explicit reload. Query parameters are dropped so
  * a test hook like ?auto= cannot fire again against the new desktop. */
 function openServer(id) {
+  // Tells the next load this fragment was chosen, not the app's saved launch URL.
+  try { sessionStorage.setItem("hearth-switching", "1"); } catch { /* private mode */ }
   window.history.replaceState(null, "", `${location.pathname}#${id}`);
   location.reload();
 }
