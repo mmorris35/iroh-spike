@@ -38,7 +38,7 @@
  * artefact, not three numbers to keep in your head. Reported to the desktop on
  * every request so "your client is stale" can be *said* rather than inferred
  * from behaviour nobody shipped. */
-const CLIENT_VERSION = "0.4.0";
+const CLIENT_VERSION = "0.4.1";
 /* Exposed so "which build is this phone actually running?" is answerable from
  * a console or a remote inspector without reading source. The whole class of
  * bug this file was reworked to fix was invisible precisely because nobody
@@ -62,6 +62,9 @@ const statusEl = document.getElementById("status");
 const msgEl = document.getElementById("msg");
 const sendBtn = document.getElementById("send");
 const form = document.getElementById("composer");
+const attachBtn = document.getElementById("attach");
+const fileEl = document.getElementById("file");
+const chipsEl = document.getElementById("chips");
 const noticeEl = document.getElementById("notice");
 const switchBtn = document.getElementById("switch");
 const menuEl = document.getElementById("desktops");
@@ -306,7 +309,7 @@ async function main() {
     resyncPush();
     // Input stays enabled when merely offline (retrying surfaces the same
     // failure honestly).
-    sendBtn.disabled = false;
+    setComposer(true);
     msgEl.focus();
 
     const auto = new URLSearchParams(location.search).get("auto");
@@ -364,19 +367,94 @@ async function fetchHistory() {
   return false;
 }
 
+// ---- Attachments --------------------------------------------------------
+// Files ride their own op: each is uploaded (and stored on the desktop) before
+// the message, which then names them by id. The limits mirror the desktop's
+// (src/attachments.rs) so a refusal is said here, before any bytes move; the
+// desktop still enforces them.
+const MAX_FILES = 5;
+const MAX_FILE_BYTES = 20 * 1024 * 1024;
+let attached = [];
+
+/** Send and 📎 are enabled together: both mean "a turn can start now". */
+function setComposer(on) {
+  sendBtn.disabled = !on;
+  attachBtn.disabled = !on;
+}
+
+function renderChips() {
+  chipsEl.replaceChildren();
+  chipsEl.hidden = attached.length === 0;
+  attached.forEach((file, i) => {
+    const chip = document.createElement("span");
+    chip.className = "chip";
+    const name = document.createElement("span");
+    name.textContent = file.name;
+    name.title = `${file.name} (${sizeLabel(file.size)})`;
+    const x = document.createElement("button");
+    x.type = "button";
+    x.textContent = "×";
+    x.setAttribute("aria-label", `Remove ${file.name}`);
+    x.addEventListener("click", () => { attached.splice(i, 1); renderChips(); });
+    chip.append(name, x);
+    chipsEl.appendChild(chip);
+  });
+}
+
+function sizeLabel(n) {
+  return n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+/** Add picked files, refusing (out loud) the ones the desktop would refuse. */
+function addFiles(files) {
+  const refused = [];
+  for (const file of files) {
+    if (attached.length >= MAX_FILES) { refused.push(`${file.name}: ${MAX_FILES} files per message`); continue; }
+    if (file.size === 0) { refused.push(`${file.name}: empty`); continue; }
+    if (file.size > MAX_FILE_BYTES) { refused.push(`${file.name}: over ${MAX_FILE_BYTES / 1024 / 1024} MB`); continue; }
+    attached.push(file);
+  }
+  renderChips();
+  if (refused.length) addBubble("agent", `Not attached:\n${refused.join("\n")}`, "error");
+}
+
+attachBtn.addEventListener("click", () => fileEl.click());
+fileEl.addEventListener("change", () => { addFiles(Array.from(fileEl.files || [])); fileEl.value = ""; });
+
 async function send(isAuto = false) {
   const text = msgEl.value.trim();
-  if (!text || sendBtn.disabled) return;
+  const files = attached.slice();
+  if ((!text && !files.length) || sendBtn.disabled) return;
   msgEl.value = "";
-  sendBtn.disabled = true;
-  addBubble("user", text);
-  saveHistory("user", text);
+  attached = [];
+  renderChips();
+  setComposer(false);
+  // Same marker the desktop writes into the transcript, so the bubble reads
+  // the same now as it will after a history reload.
+  const shown = (text || "(attached)") + files.map((f) => `\n[attached: ${f.name}]`).join("");
+  addBubble("user", shown);
+  saveHistory("user", shown);
   const pending = addWorking();
 
   let outcome = { ok: false, reply: "" };
   try {
     setStatus("connecting…");
-    const stream = client.send(serverId, text, CLIENT_VERSION);
+    const ids = [];
+    for (const [i, file] of files.entries()) {
+      setStatus(files.length > 1 ? `sending file ${i + 1} of ${files.length}…` : "sending file…");
+      const data = new Uint8Array(await file.arrayBuffer());
+      try {
+        ids.push(await client.upload(serverId, file.name, file.type || "application/octet-stream", data, CLIENT_VERSION));
+      } catch (e) {
+        // Put the unsent files back so the person can retry or drop one.
+        attached = files;
+        renderChips();
+        throw new Error(`${file.name} didn't send: ${String(e).replace(/^Error: /, "")}`);
+      }
+    }
+    const stream = ids.length
+      ? client.sendWith(serverId, text || "(see the attached files)", ids, CLIENT_VERSION)
+      : client.send(serverId, text, CLIENT_VERSION);
     const reader = stream.getReader();
     let received = false;
     while (true) {
@@ -426,7 +504,7 @@ async function send(isAuto = false) {
     // Safety net for a stream that closes cleanly without an outcome: the
     // branches above remove it in order, and a second remove() is a no-op.
     pending.remove();
-    sendBtn.disabled = false;
+    setComposer(true);
     if (isAuto) {
       // Unconditional (not via probe()): ?auto= is itself the opt-in.
       const q = `ok=${outcome.ok ? 1 : 0}&reply=${encodeURIComponent(outcome.reply.slice(0, 200))}`;
@@ -884,7 +962,7 @@ function isIOS() {
 function offerPairing() {
   if (document.getElementById("pair-form")) return; // already asking
   setStatus("not paired", true);
-  sendBtn.disabled = true;
+  setComposer(false);
 
   addBubble(
     "agent",
@@ -934,7 +1012,7 @@ function offerPairing() {
       wrap.remove();
       addBubble("agent", "Paired. This device is now trusted.");
       const denied = await fetchHistory();
-      if (!denied) { sendBtn.disabled = false; msgEl.focus(); }
+      if (!denied) { setComposer(true); msgEl.focus(); }
     } catch (err) {
       btn.disabled = false;
       input.disabled = false;

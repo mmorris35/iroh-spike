@@ -130,6 +130,18 @@
       border-radius: 22px; border: 0; background: #e8a44c; color: #16130f;
     }
     button:disabled { background: #4a4335; color: #8d8474; }
+    /* Attachments waiting to go with the next message. Removable until Send. */
+    #attach { padding: 0 12px; font-size: 1.15rem; background: #2a2620; color: #ece5da; }
+    #attach:disabled { background: #221e18; color: #8d8474; }
+    #chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 16px 0; }
+    #chips[hidden] { display: none; }
+    .chip {
+      display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
+      padding: 4px 4px 4px 10px; border-radius: 14px; background: #2a2620;
+      font-size: 0.85rem; color: #ece5da;
+    }
+    .chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 14em; }
+    .chip button { padding: 0 8px; font-size: 0.9rem; line-height: 1.6; background: #4a4335; color: #ece5da; }
     /* Pairing is a deliberate act, so the code entry sits in the conversation
        rather than the composer — it has to be found and used, not missed. */
     #pair-form { padding: 10px 0; width: 100%; }
@@ -148,7 +160,10 @@
   <div id="desktops" hidden></div>
   <div id="notice" hidden></div>
   <div id="chat"></div>
+  <div id="chips" hidden></div>
   <form id="composer">
+    <button id="attach" type="button" aria-label="Attach files" title="Attach files" disabled>📎</button>
+    <input id="file" type="file" multiple hidden>
     <input id="msg" placeholder="Message your agent" autocomplete="off">
     <button id="send" disabled>Send</button>
   </form>
@@ -158,6 +173,6 @@
     first visit to a browser happens before any worker is installed, and this
     keeps a plain HTTP cache from pairing a new index.html with an old main.js.
   -->
-  <script type="module" src="./main.js?v=0.4.0"></script>
+  <script type="module" src="./main.js?v=0.4.1"></script>
 </body>
 </html>
