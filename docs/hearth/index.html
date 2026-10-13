@@ -55,23 +55,49 @@
       flex-shrink: 0; max-width: 45%; white-space: nowrap;
       overflow: hidden; text-overflow: ellipsis;
     }
-    /* Which desktop this phone is talking to. A list, not a single address:
-       one per Windows user or per machine. */
+    /* Which desktop this phone is talking to: a full-screen list that slides
+       in from the left, like Telegram's chat list (Mike, 2026-10-12: the
+       drop-down's print was too small). One row per desktop. */
     #desktops {
-      margin: 0 16px 8px; padding: 6px; border-radius: 10px;
-      background: #221e18; display: flex; flex-direction: column; gap: 2px;
+      position: fixed; inset: 0; z-index: 50; max-width: 640px; margin: 0 auto;
+      background: #16130f; overflow-y: auto;
+      display: flex; flex-direction: column;
+      padding: max(10px, env(safe-area-inset-top)) 0 max(10px, env(safe-area-inset-bottom));
+      animation: slide-in 0.2s ease-out;
     }
     #desktops[hidden] { display: none; }
+    @keyframes slide-in { from { transform: translateX(-100%); } to { transform: none; } }
+    .list-head { display: flex; align-items: center; gap: 12px; padding: 6px 16px 12px; }
+    .list-head h2 { font-size: 1.35rem; flex: 1; }
+    .list-head button { font-size: 1.3rem; padding: 4px 12px; background: transparent; color: #ece5da; }
+    .agent-row {
+      display: flex; align-items: center; gap: 14px; width: 100%;
+      padding: 10px 16px; border-radius: 0; text-align: left;
+      background: transparent; color: #ece5da;
+    }
+    .agent-row.current { background: #221e18; }
+    .avatar {
+      width: 56px; height: 56px; border-radius: 50%; flex-shrink: 0;
+      display: grid; place-items: center;
+      font-size: 1.5rem; font-weight: 600; color: #fff;
+    }
+    .agent-text { min-width: 0; flex: 1; border-bottom: 1px solid #2a2620; padding-bottom: 10px; }
+    .agent-name { font-size: 1.15rem; font-weight: 600; }
+    .agent-row.current .agent-name { color: #e8a44c; }
+    .agent-preview {
+      font-size: 0.95rem; font-weight: 400; color: #8d8474; margin-top: 2px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
     .menu-item {
-      text-align: left; font-size: 0.9rem; font-weight: 500;
-      padding: 10px 12px; border-radius: 8px;
+      text-align: left; font-size: 1.05rem; font-weight: 500;
+      padding: 14px 16px; border-radius: 0;
       background: transparent; color: #ece5da;
     }
     .menu-item.current { color: #e8a44c; }
     .menu-item.action { color: #8d8474; }
     /* The switcher's in-page dialog (main.js ask()). The global form rule is
        for the composer, so undo its flex row and safe-area padding here. */
-    #desktops form.ask { display: block; padding: 8px 6px; }
+    #desktops form.ask { display: block; padding: 16px; }
     .ask p { font-size: 0.9rem; line-height: 1.4; margin-bottom: 10px; }
     .ask input { width: 100%; margin-bottom: 10px; }
     .ask-row { display: flex; justify-content: flex-end; gap: 8px; }
@@ -178,6 +204,6 @@
     first visit to a browser happens before any worker is installed, and this
     keeps a plain HTTP cache from pairing a new index.html with an old main.js.
   -->
-  <script type="module" src="./main.js?v=0.4.2"></script>
+  <script type="module" src="./main.js?v=0.4.3"></script>
 </body>
 </html>

@@ -38,7 +38,7 @@
  * artefact, not three numbers to keep in your head. Reported to the desktop on
  * every request so "your client is stale" can be *said* rather than inferred
  * from behaviour nobody shipped. */
-const CLIENT_VERSION = "0.4.2";
+const CLIENT_VERSION = "0.4.3";
 /* Exposed so "which build is this phone actually running?" is answerable from
  * a console or a remote inspector without reading source. The whole class of
  * bug this file was reworked to fix was invisible precisely because nobody
@@ -517,6 +517,29 @@ async function send(isAuto = false) {
 
 form.addEventListener("submit", (e) => { e.preventDefault(); send(); });
 switchBtn.addEventListener("click", toggleDesktops);
+
+// Swipe right to open the desktop picker, as Telegram opens its chat list;
+// swipe left to close it. A quick, mostly horizontal swipe only, and never
+// one that starts in the composer or a code block, where a drag selects or
+// scrolls text.
+let swipe = null;
+document.addEventListener("touchstart", (e) => {
+  const t = e.touches[0];
+  swipe = e.touches.length === 1 && !e.target.closest("textarea, input, pre")
+    ? { x: t.clientX, y: t.clientY, at: Date.now() }
+    : null;
+}, { passive: true });
+document.addEventListener("touchend", (e) => {
+  if (!swipe) return;
+  const t = e.changedTouches[0];
+  const dx = t.clientX - swipe.x;
+  const dy = t.clientY - swipe.y;
+  const quick = Date.now() - swipe.at < 700;
+  swipe = null;
+  if (!quick || Math.abs(dx) < 60 || Math.abs(dy) > Math.abs(dx) / 2) return;
+  if (dx > 0 && menuEl.hidden) toggleDesktops();
+  else if (dx < 0 && !menuEl.hidden) menuEl.hidden = true;
+}, { passive: true });
 renderSwitcher();
 main();
 
@@ -538,17 +561,61 @@ function menuButton(label, cls, onclick) {
   return b;
 }
 
+/* One desktop in the list: a lettered circle, its name, and the last line of
+ * the conversation this phone has cached for it. */
+function desktopRow(s) {
+  const here = s.id === serverId;
+  const row = document.createElement("button");
+  row.type = "button";
+  row.className = `agent-row${here ? " current" : ""}`;
+  row.onclick = () => { if (here) menuEl.hidden = true; else openServer(s.id); };
+  const name = serverName(s);
+  const avatar = document.createElement("span");
+  avatar.className = "avatar";
+  avatar.textContent = (name.trim()[0] || "?").toUpperCase();
+  avatar.style.background = avatarColour(s.id);
+  const text = document.createElement("span");
+  text.className = "agent-text";
+  const title = document.createElement("div");
+  title.className = "agent-name";
+  title.textContent = name;
+  const preview = document.createElement("div");
+  preview.className = "agent-preview";
+  preview.textContent = lastLine(s.id) || " ";
+  text.append(title, preview);
+  row.append(avatar, text);
+  return row;
+}
+
+/* The newest cached message for a desktop, on one line. */
+function lastLine(id) {
+  let h = [];
+  try { h = JSON.parse(localStorage.getItem(`hearth-history-${id}`)) || []; } catch { /* corrupt cache */ }
+  const m = h[h.length - 1];
+  if (!m || typeof m.text !== "string") return "";
+  return `${m.role === "user" ? "You: " : ""}${m.text.replace(/\s+/g, " ").trim()}`;
+}
+
+/* A steady colour per desktop, so each circle is recognisable at a glance. */
+function avatarColour(id) {
+  const colours = ["#3b82c4", "#b35fc4", "#d0564a", "#2fa5a0", "#4fa35a", "#d08a2e", "#6b6fd0", "#c4527f"];
+  let n = 2166136261; // FNV-1a
+  for (const c of id) n = Math.imul(n ^ c.charCodeAt(0), 16777619) >>> 0;
+  return colours[n % colours.length];
+}
+
 function toggleDesktops() {
   if (!menuEl.hidden) { menuEl.hidden = true; return; }
   menuEl.replaceChildren();
-  for (const s of servers) {
-    const here = s.id === serverId;
-    menuEl.appendChild(menuButton(
-      `${here ? "✓ " : ""}${serverName(s)}`,
-      here ? "current" : "",
-      () => { if (here) menuEl.hidden = true; else openServer(s.id); },
-    ));
-  }
+  const head = document.createElement("div");
+  head.className = "list-head";
+  const title = document.createElement("h2");
+  title.textContent = "Desktops";
+  const close = menuButton("✕", "", () => { menuEl.hidden = true; });
+  close.setAttribute("aria-label", "Close");
+  head.append(title, close);
+  menuEl.appendChild(head);
+  for (const s of servers) menuEl.appendChild(desktopRow(s));
   menuEl.appendChild(menuButton("Add a desktop…", "action", addDesktop));
   const current = servers.find((s) => s.id === serverId);
   if (current) {
