@@ -12,6 +12,18 @@ export class HearthClient {
     private constructor();
     free(): void;
     [Symbol.dispose](): void;
+    /**
+     * Confirm (`approve`) or decline a held action; resolves to what happened.
+     */
+    confirm(server_id: string, id: string, approve: boolean, client_version?: string | null): Promise<string>;
+    /**
+     * `[{id, summary, by, ageSecs}]`: authority actions waiting for a parent.
+     */
+    confirmations(server_id: string, client_version?: string | null): Promise<any>;
+    /**
+     * Admit a waiting device as `person`, or refuse it when `person` is empty.
+     */
+    decide(server_id: string, device: string, person?: string | null, client_version?: string | null): Promise<void>;
     endpoint_id(): string;
     /**
      * Fetch the last `limit` transcript turns from the desktop, oldest
@@ -21,6 +33,16 @@ export class HearthClient {
      * makes this call, it is where the version handshake rides.
      */
     history(server_id: string, limit: number, client_version?: string | null): Promise<any>;
+    /**
+     * Ask to join a household agent (R2.1). Resolves to `waiting`,
+     * `admitted` or `refused`; call again to poll.
+     */
+    join(server_id: string, name: string, client_version?: string | null): Promise<string>;
+    /**
+     * `{requests: [{device, name, ageSecs}], people: [{id, name, role}]}` for
+     * the super user; rejects for anyone else.
+     */
+    joins(server_id: string, client_version?: string | null): Promise<any>;
     /**
      * Present a pairing code (typed by the user, read off the desktop's
      * screen) to the desktop. Resolves on success — including "already
@@ -115,8 +137,13 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly __wbg_hearthclient_free: (a: number, b: number) => void;
+    readonly hearthclient_confirm: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => number;
+    readonly hearthclient_confirmations: (a: number, b: number, c: number, d: number, e: number) => number;
+    readonly hearthclient_decide: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => number;
     readonly hearthclient_endpoint_id: (a: number, b: number) => void;
     readonly hearthclient_history: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
+    readonly hearthclient_join: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => number;
+    readonly hearthclient_joins: (a: number, b: number, c: number, d: number, e: number) => number;
     readonly hearthclient_pair: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => number;
     readonly hearthclient_pushKey: (a: number, b: number, c: number, d: number, e: number) => number;
     readonly hearthclient_secret_hex: (a: number, b: number) => void;
@@ -141,15 +168,15 @@ export interface InitOutput {
     readonly intounderlyingsource_cancel: (a: number) => void;
     readonly intounderlyingsource_pull: (a: number, b: number) => number;
     readonly ring_core_0_17_14__bn_mul_mont: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
-    readonly __wasm_bindgen_func_elem_14906: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_14908: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_5945: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_3531: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_7585: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_5744: (a: number, b: number) => void;
-    readonly __wasm_bindgen_func_elem_6846: (a: number, b: number) => void;
-    readonly __wasm_bindgen_func_elem_6887: (a: number, b: number) => void;
-    readonly __wasm_bindgen_func_elem_14759: (a: number, b: number) => void;
+    readonly __wasm_bindgen_func_elem_15182: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_15184: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_6221: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_3807: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_7861: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_6020: (a: number, b: number) => void;
+    readonly __wasm_bindgen_func_elem_7122: (a: number, b: number) => void;
+    readonly __wasm_bindgen_func_elem_7163: (a: number, b: number) => void;
+    readonly __wasm_bindgen_func_elem_15035: (a: number, b: number) => void;
     readonly __wbindgen_export: (a: number, b: number) => number;
     readonly __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_export3: (a: number) => void;

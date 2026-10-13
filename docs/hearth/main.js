@@ -38,7 +38,7 @@
  * artefact, not three numbers to keep in your head. Reported to the desktop on
  * every request so "your client is stale" can be *said* rather than inferred
  * from behaviour nobody shipped. */
-const CLIENT_VERSION = "0.4.1";
+const CLIENT_VERSION = "0.4.2";
 /* Exposed so "which build is this phone actually running?" is answerable from
  * a console or a remote inspector without reading source. The whole class of
  * bug this file was reworked to fix was invisible precisely because nobody
@@ -307,6 +307,8 @@ async function main() {
     // Endpoints rotate silently, so the desktop is handed this browser's
     // subscription again on every open (R7.5). Not awaited: chat is ready now.
     resyncPush();
+    // The super user's phone shows devices waiting to join (R2.1).
+    watchJoins();
     // Input stays enabled when merely offline (retrying surfaces the same
     // failure honestly).
     setComposer(true);
@@ -1024,7 +1026,163 @@ function offerPairing() {
     }
   };
 
+  // A household agent (house-REQUIREMENTS R2.1) admits devices from its
+  // super user's phone instead of a code typed at the desktop. Offered beside
+  // the code; a personal agent answers that it takes no join requests.
+  const ask = document.createElement("button");
+  ask.type = "button";
+  ask.className = "join-ask";
+  ask.textContent = "No code? Ask to join";
+  ask.onclick = () => askToJoin(wrap, ask);
+  wrap.append(ask);
+
   chatEl.appendChild(wrap);
   wrap.scrollIntoView({ block: "nearest" });
   input.focus();
+}
+
+/* R2.1/R2.2: ask the household's super user to let this device in, then poll
+ * until they decide or the request expires (ten minutes, server-side). */
+async function askToJoin(form, button) {
+  button.disabled = true;
+  setStatus("asking to join…");
+  const deadline = Date.now() + 10 * 60 * 1000;
+  let told = false;
+  while (Date.now() < deadline) {
+    let status;
+    try {
+      status = await client.join(serverId, deviceName(), CLIENT_VERSION);
+    } catch (err) {
+      button.disabled = false;
+      setStatus("not paired", true);
+      addBubble("agent", String(err).replace(/^Error:\s*/, ""), "error");
+      return;
+    }
+    if (status === "admitted") {
+      form.remove();
+      // R2.3: a plain notice at first connection.
+      addBubble("agent", "You're in. Everything here is shared with the whole family.");
+      const denied = await fetchHistory();
+      if (!denied) { resyncPush(); setComposer(true); msgEl.focus(); }
+      return;
+    }
+    if (status === "refused") {
+      button.disabled = false;
+      setStatus("not paired", true);
+      addBubble("agent", "The request to join was turned down.", "error");
+      return;
+    }
+    if (!told) {
+      addBubble("agent", "Asked to join. Waiting for the household's super user to let this device in (the request lasts ten minutes).");
+      told = true;
+    }
+    setStatus("waiting for approval…");
+    await new Promise((r) => setTimeout(r, 5000));
+  }
+  button.disabled = false;
+  setStatus("not paired", true);
+  addBubble("agent", "Nobody answered in ten minutes. Ask again when they're around.", "error");
+}
+
+/* R2.1: on the super user's phone, devices waiting to join, each with who it
+ * belongs to and Admit / Turn away. Anyone else's phone gets a refusal from
+ * the desktop and shows nothing. */
+let joinsTimer = null;
+async function checkJoins() {
+  let view;
+  try {
+    view = await client.joins(serverId, CLIENT_VERSION);
+  } catch {
+    return; // not the super user, or no household: nothing to show
+  }
+  for (const el of document.querySelectorAll(".join-request")) {
+    if (!view.requests.some((r) => r.device === el.dataset.device)) el.remove();
+  }
+  for (const r of view.requests) {
+    if (document.querySelector(`.join-request[data-device="${CSS.escape(r.device)}"]`)) continue;
+    const box = document.createElement("form");
+    box.className = "join-request";
+    box.dataset.device = r.device;
+    const label = document.createElement("div");
+    label.textContent = `"${r.name}" wants to join (device ${r.device.slice(0, 8)}…). Whose is it?`;
+    const who = document.createElement("select");
+    for (const p of view.people) {
+      const o = document.createElement("option");
+      o.value = p.id;
+      o.textContent = `${p.name} (${p.role})`;
+      who.append(o);
+    }
+    const admit = document.createElement("button");
+    admit.type = "submit";
+    admit.textContent = "Admit";
+    const refuse = document.createElement("button");
+    refuse.type = "button";
+    refuse.textContent = "Turn away";
+    const decide = async (person) => {
+      admit.disabled = refuse.disabled = who.disabled = true;
+      try {
+        await client.decide(serverId, r.device, person, CLIENT_VERSION);
+        box.remove();
+        addBubble("agent", person ? `Admitted "${r.name}" as ${who.selectedOptions[0].textContent}.` : `Turned away "${r.name}".`);
+      } catch (err) {
+        admit.disabled = refuse.disabled = who.disabled = false;
+        addBubble("agent", String(err).replace(/^Error:\s*/, ""), "error");
+      }
+    };
+    box.onsubmit = (e) => { e.preventDefault(); decide(who.value); };
+    refuse.onclick = () => decide("");
+    box.append(label, who, admit, refuse);
+    chatEl.appendChild(box);
+    box.scrollIntoView({ block: "nearest" });
+  }
+}
+/* R3.2: on a parent's (or the super user's) phone, authority actions waiting
+ * for a parent, shown exactly as they would run, with Confirm and Decline.
+ * Other phones get a refusal from the desktop and show nothing. */
+async function checkConfirmations() {
+  let items;
+  try {
+    items = await client.confirmations(serverId, CLIENT_VERSION);
+  } catch {
+    return;
+  }
+  for (const el of document.querySelectorAll(".confirm-request")) {
+    if (!items.some((c) => c.id === el.dataset.id)) el.remove();
+  }
+  for (const c of items) {
+    if (document.querySelector(`.confirm-request[data-id="${CSS.escape(c.id)}"]`)) continue;
+    const box = document.createElement("div");
+    box.className = "confirm-request";
+    box.dataset.id = c.id;
+    const label = document.createElement("div");
+    label.textContent = `Needs a parent (asked on ${c.by}'s turn): ${c.summary}`;
+    const yes = document.createElement("button");
+    yes.textContent = "Confirm";
+    const no = document.createElement("button");
+    no.textContent = "Decline";
+    const decide = async (approve) => {
+      yes.disabled = no.disabled = true;
+      try {
+        const what = await client.confirm(serverId, c.id, approve, CLIENT_VERSION);
+        box.remove();
+        addBubble("agent", what);
+      } catch (err) {
+        yes.disabled = no.disabled = false;
+        addBubble("agent", String(err).replace(/^Error:\s*/, ""), "error");
+      }
+    };
+    yes.onclick = () => decide(true);
+    no.onclick = () => decide(false);
+    box.append(label, yes, no);
+    chatEl.appendChild(box);
+    box.scrollIntoView({ block: "nearest" });
+  }
+}
+
+function watchJoins() {
+  const check = () => { checkJoins(); checkConfirmations(); };
+  check();
+  clearInterval(joinsTimer);
+  joinsTimer = setInterval(() => { if (!document.hidden) check(); }, 30000);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) check(); });
 }

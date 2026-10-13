@@ -149,6 +149,11 @@
       font-size: 1.4rem; letter-spacing: 0.12em; text-align: center;
       text-transform: uppercase; font-family: ui-monospace, SFMono-Regular, monospace;
     }
+    .join-ask { margin-top: 8px; background: transparent; color: #e8a44c; border: 1px solid #4a4335; }
+    .join-request { padding: 10px; margin: 8px 0; border: 1px solid #4a4335; border-radius: 10px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .join-request div { width: 100%; }
+    .confirm-request { padding: 10px; margin: 8px 0; border: 1px solid #e8a44c; border-radius: 10px; display: flex; flex-wrap: wrap; gap: 8px; }
+    .confirm-request div { width: 100%; word-break: break-word; }
   </style>
 </head>
 <body>
@@ -173,6 +178,6 @@
     first visit to a browser happens before any worker is installed, and this
     keeps a plain HTTP cache from pairing a new index.html with an old main.js.
   -->
-  <script type="module" src="./main.js?v=0.4.1"></script>
+  <script type="module" src="./main.js?v=0.4.2"></script>
 </body>
 </html>
