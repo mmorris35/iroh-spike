@@ -34,6 +34,20 @@ export class HearthClient {
      */
     history(server_id: string, limit: number, client_version?: string | null): Promise<any>;
     /**
+     * The household settings screen's view (super user only): `{people,
+     * policies, versions: {people, policies}, devices: [{id, name, lastSeen,
+     * person, paired}], choices: {roles, history, tools}, note}`. `people`
+     * and `policies` are the files as they are on disk. Rejects for anyone
+     * but the super user, which is how the page knows not to offer the screen.
+     */
+    household(server_id: string, client_version?: string | null): Promise<any>;
+    /**
+     * Replace `people.json` (`file` = "people") or `policies.json`
+     * ("policies") with `content` (a JSON string), based on `version` from
+     * [`Self::household`]. Rejects with the desktop's reason, verbatim.
+     */
+    householdSave(server_id: string, file: string, content: string, version: string, client_version?: string | null): Promise<void>;
+    /**
      * Ask to join a household agent (R2.1). Resolves to `waiting`,
      * `admitted` or `refused`; call again to poll.
      */
@@ -58,6 +72,10 @@ export class HearthClient {
      * `pushManager.subscribe` takes as `applicationServerKey`.
      */
     pushKey(server_id: string, client_version?: string | null): Promise<string>;
+    /**
+     * Revoke a device by its full id (super user only).
+     */
+    revokeDevice(server_id: string, device: string, client_version?: string | null): Promise<void>;
     /**
      * The device secret to persist (hex). Never leaves the browser.
      */
@@ -142,10 +160,13 @@ export interface InitOutput {
     readonly hearthclient_decide: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => number;
     readonly hearthclient_endpoint_id: (a: number, b: number) => void;
     readonly hearthclient_history: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
+    readonly hearthclient_household: (a: number, b: number, c: number, d: number, e: number) => number;
+    readonly hearthclient_householdSave: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => number;
     readonly hearthclient_join: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => number;
     readonly hearthclient_joins: (a: number, b: number, c: number, d: number, e: number) => number;
     readonly hearthclient_pair: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => number;
     readonly hearthclient_pushKey: (a: number, b: number, c: number, d: number, e: number) => number;
+    readonly hearthclient_revokeDevice: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => number;
     readonly hearthclient_secret_hex: (a: number, b: number) => void;
     readonly hearthclient_send: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => void;
     readonly hearthclient_sendWith: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
@@ -168,15 +189,15 @@ export interface InitOutput {
     readonly intounderlyingsource_cancel: (a: number) => void;
     readonly intounderlyingsource_pull: (a: number, b: number) => number;
     readonly ring_core_0_17_14__bn_mul_mont: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
-    readonly __wasm_bindgen_func_elem_15182: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_15184: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_6221: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_3807: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_7861: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_6020: (a: number, b: number) => void;
-    readonly __wasm_bindgen_func_elem_7122: (a: number, b: number) => void;
-    readonly __wasm_bindgen_func_elem_7163: (a: number, b: number) => void;
-    readonly __wasm_bindgen_func_elem_15035: (a: number, b: number) => void;
+    readonly __wasm_bindgen_func_elem_15521: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_15523: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_6560: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_4146: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_8200: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_6359: (a: number, b: number) => void;
+    readonly __wasm_bindgen_func_elem_7461: (a: number, b: number) => void;
+    readonly __wasm_bindgen_func_elem_7502: (a: number, b: number) => void;
+    readonly __wasm_bindgen_func_elem_15374: (a: number, b: number) => void;
     readonly __wbindgen_export: (a: number, b: number) => number;
     readonly __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_export3: (a: number) => void;

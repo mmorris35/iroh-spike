@@ -38,7 +38,7 @@
  * artefact, not three numbers to keep in your head. Reported to the desktop on
  * every request so "your client is stale" can be *said* rather than inferred
  * from behaviour nobody shipped. */
-const CLIENT_VERSION = "0.4.3";
+const CLIENT_VERSION = "0.4.4";
 /* Exposed so "which build is this phone actually running?" is answerable from
  * a console or a remote inspector without reading source. The whole class of
  * bug this file was reworked to fix was invisible precisely because nobody
@@ -68,6 +68,8 @@ const chipsEl = document.getElementById("chips");
 const noticeEl = document.getElementById("notice");
 const switchBtn = document.getElementById("switch");
 const menuEl = document.getElementById("desktops");
+const householdBtn = document.getElementById("household-btn");
+const householdEl = document.getElementById("household");
 
 const probing = new URLSearchParams(location.search).has("probe");
 /** Report to the dev server's log (a deliberate 404). No-op-ish in production. */
@@ -309,6 +311,9 @@ async function main() {
     resyncPush();
     // The super user's phone shows devices waiting to join (R2.1).
     watchJoins();
+    // The household settings screen, if the desktop will serve it to this
+    // device (super user only; the desktop decides).
+    offerHousehold();
     // Input stays enabled when merely offline (retrying surfaces the same
     // failure honestly).
     setComposer(true);
@@ -1252,4 +1257,254 @@ function watchJoins() {
   clearInterval(joinsTimer);
   joinsTimer = setInterval(() => { if (!document.hidden) check(); }, 30000);
   document.addEventListener("visibilitychange", () => { if (!document.hidden) check(); });
+}
+
+/* ---------------------------------------------------------------------------
+ * Household settings (super user only; src/household.rs)
+ *
+ * This page displays, sorts and sends; it decides nothing. Whether the screen
+ * exists for this device is the desktop's answer to `household`. Every choice
+ * list (roles, history settings, tool names) comes from the desktop's
+ * `choices`. Every rule (valid ids, quiet-hour times, the last super user, not
+ * locking yourself out, someone else saved first) is checked by the desktop,
+ * and its reason is shown here verbatim. The page only turns the form back
+ * into the JSON file and sends it with the version it was based on.
+ * ------------------------------------------------------------------------ */
+
+let household = null;
+
+async function offerHousehold() {
+  if (typeof client.household !== "function") return; // an older wasm
+  try {
+    household = await client.household(serverId, CLIENT_VERSION);
+    householdBtn.hidden = false;
+  } catch {
+    householdBtn.hidden = true; // not the super user, or no household
+  }
+}
+
+householdBtn.addEventListener("click", () => openHousehold());
+
+async function openHousehold(message = "", isError = false) {
+  try {
+    household = await client.household(serverId, CLIENT_VERSION);
+  } catch (e) {
+    householdEl.hidden = true;
+    householdBtn.hidden = true;
+    setStatus(errText(e), true);
+    return;
+  }
+  renderHousehold(message, isError);
+  householdEl.hidden = false;
+}
+
+function errText(e) {
+  return String(e).replace(/^Error:\s*/, "");
+}
+
+function el(tag, props = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === "dataset") Object.assign(node.dataset, v);
+    else if (k in node) node[k] = v;
+    else node.setAttribute(k, v);
+  }
+  node.append(...children);
+  return node;
+}
+
+function select(options, value) {
+  const s = el("select");
+  for (const [v, label] of options) s.append(el("option", { value: v, textContent: label }));
+  s.value = value ?? "";
+  return s;
+}
+
+function td(label, ...children) {
+  return el("td", label ? { "data-label": label } : {}, ...children);
+}
+
+function table(headers, rows) {
+  const head = el("tr", {}, ...headers.map((h) => el("th", { textContent: h })));
+  return el("table", { className: "hh-table" }, el("thead", {}, head), el("tbody", {}, ...rows));
+}
+
+function msgBox() {
+  return el("div", { className: "hh-msg", hidden: true });
+}
+
+function show(box, text, isError) {
+  box.textContent = text;
+  box.className = isError ? "hh-msg err" : "hh-msg";
+  box.hidden = !text;
+}
+
+async function saveFile(file, content, box, button) {
+  button.disabled = true;
+  show(box, "saving…", false);
+  try {
+    await client.householdSave(serverId, file, JSON.stringify(content), household.versions[file], CLIENT_VERSION);
+    await openHousehold(`Saved ${file}.json.`);
+  } catch (e) {
+    button.disabled = false;
+    show(box, errText(e), true);
+  }
+}
+
+function renderHousehold(message, isError) {
+  const v = household;
+  const people = Array.isArray(v.people?.people) ? v.people.people : [];
+  const wrap = el("div", { className: "hh-wrap" });
+  const close = el("button", { type: "button", textContent: "✕", onclick: () => { householdEl.hidden = true; } });
+  close.setAttribute("aria-label", "Close");
+  const reload = el("button", { type: "button", className: "quiet", textContent: "Reload", onclick: () => openHousehold() });
+  wrap.append(el("div", { className: "list-head" }, el("h2", { textContent: "Household" }), reload, close));
+  const top = msgBox();
+  show(top, [message, v.note].filter(Boolean).join("\n"), isError || (!message && !!v.note));
+  wrap.append(top);
+
+  // ---- People and devices: one file, people.json, saved together.
+  const personOptions = () => [["", "nobody"], ...peopleRows.map((r) => [r.id.value.trim(), r.id.value.trim()]).filter(([id]) => id)];
+  const peopleRows = [];
+  const peopleBody = el("tbody");
+  const addPerson = (p = { id: "", name: "", role: "" }) => {
+    const row = {
+      id: el("input", { value: p.id ?? "", placeholder: "id" }),
+      name: el("input", { value: p.name ?? "", placeholder: "name" }),
+      role: select(v.choices.roles.map((r) => [r, r]), p.role),
+    };
+    row.id.addEventListener("change", refreshPersonSelects);
+    const remove = el("button", { type: "button", className: "quiet", textContent: "Remove" });
+    const tr = el("tr", {}, td("Id", row.id), td("Name", row.name), td("Role", row.role), td("", remove));
+    remove.onclick = () => { peopleRows.splice(peopleRows.indexOf(row), 1); tr.remove(); refreshPersonSelects(); };
+    peopleRows.push(row);
+    peopleBody.append(tr);
+  };
+  people.forEach((p) => addPerson(p));
+  const peopleTable = table(["Id", "Name", "Role", ""], []);
+  peopleTable.replaceChild(peopleBody, peopleTable.tBodies[0]);
+  const desktop = select(personOptions(), v.people?.desktop);
+  const personSelects = [desktop];
+  function refreshPersonSelects() {
+    for (const s of personSelects) {
+      const keep = s.value;
+      s.replaceChildren(...personOptions().map(([val, label]) => el("option", { value: val, textContent: label })));
+      s.value = keep;
+    }
+  }
+
+  const devices = [...v.devices].sort((a, b) => (a.name ?? "~").localeCompare(b.name ?? "~"));
+  const deviceRows = devices.map((d) => {
+    const who = select(personOptions(), d.person);
+    personSelects.push(who);
+    const revoke = el("button", { type: "button", className: "quiet", textContent: "Revoke" });
+    revoke.onclick = () => revokeDevice(d, revoke, peopleBox);
+    const seen = d.paired ? (d.lastSeen ? `last seen ${d.lastSeen}` : "paired") : "not paired";
+    const tr = el("tr", {},
+      td("Device", d.name ?? "(not in the allowlist)"),
+      td("Id", el("code", { textContent: `${d.id.slice(0, 10)}…`, title: d.id })),
+      td("Status", seen),
+      td("Person", who),
+      td("", revoke));
+    return { d, who, tr };
+  });
+
+  const peopleBox = msgBox();
+  const savePeople = el("button", { type: "button", textContent: "Save people and devices" });
+  savePeople.onclick = () => {
+    const content = {
+      people: peopleRows.map((r) => ({ id: r.id.value.trim(), name: r.name.value.trim(), role: r.role.value })),
+      devices: Object.fromEntries(deviceRows.filter((r) => r.who.value).map((r) => [r.d.id, r.who.value])),
+    };
+    if (desktop.value) content.desktop = desktop.value;
+    saveFile("people", content, peopleBox, savePeople);
+  };
+  wrap.append(el("section", { className: "hh-section" },
+    el("h3", { textContent: "People" }),
+    peopleTable,
+    el("div", { className: "hh-actions" },
+      el("button", { type: "button", className: "quiet", textContent: "Add person", onclick: () => addPerson() }),
+      el("label", { className: "hh-inline" }, "This desktop is ", desktop)),
+  ));
+  wrap.append(el("section", { className: "hh-section" },
+    el("h3", { textContent: "Devices" }),
+    table(["Device", "Id", "Status", "Person", ""], deviceRows.map((r) => r.tr)),
+    el("div", { className: "hh-actions" }, savePeople),
+    peopleBox,
+  ));
+
+  // ---- Policies: one row per role, then one per (saved) person.
+  const pol = v.policies ?? {};
+  const policyRows = [
+    ...v.choices.roles.map((r) => ({ kind: "roles", key: r, label: `role: ${r}`, p: pol.roles?.[r] ?? {} })),
+    ...people.map((p) => ({ kind: "people", key: p.id, label: `${p.name} (${p.id})`, p: pol.people?.[p.id] ?? {} })),
+  ];
+  const tristate = (val) => select([["", "inherit"], ["true", "yes"], ["false", "no"]], val === undefined || val === null ? "" : String(val));
+  const built = policyRows.map((r) => {
+    const denied = Array.isArray(r.p.deny_tools) ? r.p.deny_tools : null;
+    // Tools the desktop offers, plus any already denied that it doesn't
+    // (so a save never silently drops one).
+    const names = [...v.choices.tools, ...(denied ?? []).filter((t) => !v.choices.tools.includes(t))];
+    const inherit = el("input", { type: "checkbox", checked: denied === null });
+    const boxes = names.map((t) => el("input", { type: "checkbox", value: t, checked: !!denied?.includes(t), disabled: denied === null }));
+    inherit.onchange = () => boxes.forEach((b) => { b.disabled = inherit.checked; });
+    const tools = el("div", { className: "hh-tools" },
+      el("label", {}, inherit, "inherit"),
+      ...boxes.map((b) => el("label", {}, b, b.value)));
+    const f = {
+      inherit, boxes,
+      start: el("input", { type: "time", value: r.p.quiet_hours?.start ?? "" }),
+      end: el("input", { type: "time", value: r.p.quiet_hours?.end ?? "" }),
+      reply: el("input", { value: r.p.quiet_reply ?? "", placeholder: "quiet reply" }),
+      history: select([["", "inherit"], ...v.choices.history.map((h) => [h, h])], r.p.history ?? ""),
+      recall: tristate(r.p.recall),
+      hot: tristate(r.p.hot),
+    };
+    const tr = el("tr", {},
+      td("Who", r.label), td("Denied tools", tools),
+      td("Quiet from", f.start), td("Quiet until", f.end), td("Quiet reply", f.reply),
+      td("History", f.history), td("Recall", f.recall), td("Kept close", f.hot));
+    return { r, f, tr };
+  });
+  const policiesBox = msgBox();
+  const savePolicies = el("button", { type: "button", textContent: "Save policies" });
+  savePolicies.onclick = () => {
+    const content = { roles: {}, people: {} };
+    for (const { r, f } of built) {
+      const p = {};
+      if (!f.inherit.checked) p.deny_tools = f.boxes.filter((b) => b.checked).map((b) => b.value);
+      if (f.start.value || f.end.value) {
+        p.quiet_hours = {};
+        if (f.start.value) p.quiet_hours.start = f.start.value;
+        if (f.end.value) p.quiet_hours.end = f.end.value;
+      }
+      if (f.reply.value.trim()) p.quiet_reply = f.reply.value.trim();
+      if (f.history.value) p.history = f.history.value;
+      if (f.recall.value) p.recall = f.recall.value === "true";
+      if (f.hot.value) p.hot = f.hot.value === "true";
+      if (Object.keys(p).length) content[r.kind][r.key] = p;
+    }
+    saveFile("policies", content, policiesBox, savePolicies);
+  };
+  wrap.append(el("section", { className: "hh-section" },
+    el("h3", { textContent: "Policies" }),
+    table(["Who", "Denied tools", "Quiet from", "Quiet until", "Quiet reply", "History", "Recall", "Kept close"], built.map((b) => b.tr)),
+    el("div", { className: "hh-actions" }, savePolicies),
+    policiesBox,
+  ));
+
+  householdEl.replaceChildren(wrap);
+}
+
+async function revokeDevice(d, button, box) {
+  const label = d.name ?? `${d.id.slice(0, 10)}…`;
+  if (!window.confirm(`Revoke ${label}? It won't be able to connect, and it stops counting as anyone.`)) return;
+  button.disabled = true;
+  try {
+    await client.revokeDevice(serverId, d.id, CLIENT_VERSION);
+    await openHousehold(`Revoked ${label}.`);
+  } catch (e) {
+    button.disabled = false;
+    show(box, errText(e), true);
+  }
 }

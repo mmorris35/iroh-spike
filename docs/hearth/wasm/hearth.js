@@ -108,6 +108,49 @@ export class HearthClient {
         return takeObject(ret);
     }
     /**
+     * The household settings screen's view (super user only): `{people,
+     * policies, versions: {people, policies}, devices: [{id, name, lastSeen,
+     * person, paired}], choices: {roles, history, tools}, note}`. `people`
+     * and `policies` are the files as they are on disk. Rejects for anyone
+     * but the super user, which is how the page knows not to offer the screen.
+     * @param {string} server_id
+     * @param {string | null} [client_version]
+     * @returns {Promise<any>}
+     */
+    household(server_id, client_version) {
+        const ptr0 = passStringToWasm0(server_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        var ptr1 = isLikeNone(client_version) ? 0 : passStringToWasm0(client_version, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        var len1 = WASM_VECTOR_LEN;
+        const ret = wasm.hearthclient_household(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        return takeObject(ret);
+    }
+    /**
+     * Replace `people.json` (`file` = "people") or `policies.json`
+     * ("policies") with `content` (a JSON string), based on `version` from
+     * [`Self::household`]. Rejects with the desktop's reason, verbatim.
+     * @param {string} server_id
+     * @param {string} file
+     * @param {string} content
+     * @param {string} version
+     * @param {string | null} [client_version]
+     * @returns {Promise<void>}
+     */
+    householdSave(server_id, file, content, version, client_version) {
+        const ptr0 = passStringToWasm0(server_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(file, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(content, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len2 = WASM_VECTOR_LEN;
+        const ptr3 = passStringToWasm0(version, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len3 = WASM_VECTOR_LEN;
+        var ptr4 = isLikeNone(client_version) ? 0 : passStringToWasm0(client_version, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        var len4 = WASM_VECTOR_LEN;
+        const ret = wasm.hearthclient_householdSave(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, ptr4, len4);
+        return takeObject(ret);
+    }
+    /**
      * Ask to join a household agent (R2.1). Resolves to `waiting`,
      * `admitted` or `refused`; call again to poll.
      * @param {string} server_id
@@ -179,6 +222,23 @@ export class HearthClient {
         var ptr1 = isLikeNone(client_version) ? 0 : passStringToWasm0(client_version, wasm.__wbindgen_export, wasm.__wbindgen_export2);
         var len1 = WASM_VECTOR_LEN;
         const ret = wasm.hearthclient_pushKey(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        return takeObject(ret);
+    }
+    /**
+     * Revoke a device by its full id (super user only).
+     * @param {string} server_id
+     * @param {string} device
+     * @param {string | null} [client_version]
+     * @returns {Promise<void>}
+     */
+    revokeDevice(server_id, device, client_version) {
+        const ptr0 = passStringToWasm0(server_id, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(device, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        const len1 = WASM_VECTOR_LEN;
+        var ptr2 = isLikeNone(client_version) ? 0 : passStringToWasm0(client_version, wasm.__wbindgen_export, wasm.__wbindgen_export2);
+        var len2 = WASM_VECTOR_LEN;
+        const ret = wasm.hearthclient_revokeDevice(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2);
         return takeObject(ret);
     }
     /**
@@ -762,6 +822,10 @@ function __wbg_get_imports() {
             const ret = new Uint8Array(getObject(arg0));
             return addHeapObject(ret);
         },
+        __wbg_new_622fc80556be2e26: function() {
+            const ret = new Map();
+            return addHeapObject(ret);
+        },
         __wbg_new_ce1ab61c1c2b300d: function() {
             const ret = new Object();
             return addHeapObject(ret);
@@ -789,7 +853,7 @@ function __wbg_get_imports() {
                     const a = state0.a;
                     state0.a = 0;
                     try {
-                        return __wasm_bindgen_func_elem_15184(a, state0.b, arg0, arg1);
+                        return __wasm_bindgen_func_elem_15523(a, state0.b, arg0, arg1);
                     } finally {
                         state0.a = a;
                     }
@@ -916,6 +980,10 @@ function __wbg_get_imports() {
         }, arguments); },
         __wbg_set_29c99a8aac1c01e5: function(arg0, arg1, arg2) {
             getObject(arg0).set(getArrayU8FromWasm0(arg1, arg2));
+        },
+        __wbg_set_52b1e1eb5bed906a: function(arg0, arg1, arg2) {
+            const ret = getObject(arg0).set(getObject(arg1), getObject(arg2));
+            return addHeapObject(ret);
         },
         __wbg_set_6be42768c690e380: function(arg0, arg1, arg2) {
             getObject(arg0)[takeObject(arg1)] = takeObject(arg2);
@@ -1044,43 +1112,43 @@ function __wbg_get_imports() {
             return ret;
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 1838, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_6221);
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 1890, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_6560);
             return addHeapObject(ret);
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 3435, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_15182);
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 3486, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_15521);
             return addHeapObject(ret);
         },
         __wbindgen_cast_0000000000000003: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("CloseEvent")], shim_idx: 624, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_3807);
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("CloseEvent")], shim_idx: 676, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_4146);
             return addHeapObject(ret);
         },
         __wbindgen_cast_0000000000000004: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("MessageEvent")], shim_idx: 2240, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_7861);
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("MessageEvent")], shim_idx: 2292, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_8200);
             return addHeapObject(ret);
         },
         __wbindgen_cast_0000000000000005: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 1796, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_6020);
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 1848, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_6359);
             return addHeapObject(ret);
         },
         __wbindgen_cast_0000000000000006: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 1983, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_7122);
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 2035, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_7461);
             return addHeapObject(ret);
         },
         __wbindgen_cast_0000000000000007: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 1985, ret: Unit, inner_ret: Some(Unit) }, mutable: false }) -> Externref`.
-            const ret = makeClosure(arg0, arg1, __wasm_bindgen_func_elem_7163);
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 2037, ret: Unit, inner_ret: Some(Unit) }, mutable: false }) -> Externref`.
+            const ret = makeClosure(arg0, arg1, __wasm_bindgen_func_elem_7502);
             return addHeapObject(ret);
         },
         __wbindgen_cast_0000000000000008: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 3418, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_15035);
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 3469, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_15374);
             return addHeapObject(ret);
         },
         __wbindgen_cast_0000000000000009: function(arg0) {
@@ -1088,17 +1156,22 @@ function __wbg_get_imports() {
             const ret = arg0;
             return addHeapObject(ret);
         },
-        __wbindgen_cast_000000000000000a: function(arg0, arg1) {
+        __wbindgen_cast_000000000000000a: function(arg0) {
+            // Cast intrinsic for `I64 -> Externref`.
+            const ret = arg0;
+            return addHeapObject(ret);
+        },
+        __wbindgen_cast_000000000000000b: function(arg0, arg1) {
             // Cast intrinsic for `Ref(Slice(U8)) -> NamedExternref("Uint8Array")`.
             const ret = getArrayU8FromWasm0(arg0, arg1);
             return addHeapObject(ret);
         },
-        __wbindgen_cast_000000000000000b: function(arg0, arg1) {
+        __wbindgen_cast_000000000000000c: function(arg0, arg1) {
             // Cast intrinsic for `Ref(String) -> Externref`.
             const ret = getStringFromWasm0(arg0, arg1);
             return addHeapObject(ret);
         },
-        __wbindgen_cast_000000000000000c: function(arg0) {
+        __wbindgen_cast_000000000000000d: function(arg0) {
             // Cast intrinsic for `U64 -> Externref`.
             const ret = BigInt.asUintN(64, arg0);
             return addHeapObject(ret);
@@ -1117,38 +1190,38 @@ function __wbg_get_imports() {
     };
 }
 
-function __wasm_bindgen_func_elem_6020(arg0, arg1) {
-    wasm.__wasm_bindgen_func_elem_6020(arg0, arg1);
+function __wasm_bindgen_func_elem_6359(arg0, arg1) {
+    wasm.__wasm_bindgen_func_elem_6359(arg0, arg1);
 }
 
-function __wasm_bindgen_func_elem_7122(arg0, arg1) {
-    wasm.__wasm_bindgen_func_elem_7122(arg0, arg1);
+function __wasm_bindgen_func_elem_7461(arg0, arg1) {
+    wasm.__wasm_bindgen_func_elem_7461(arg0, arg1);
 }
 
-function __wasm_bindgen_func_elem_7163(arg0, arg1) {
-    wasm.__wasm_bindgen_func_elem_7163(arg0, arg1);
+function __wasm_bindgen_func_elem_7502(arg0, arg1) {
+    wasm.__wasm_bindgen_func_elem_7502(arg0, arg1);
 }
 
-function __wasm_bindgen_func_elem_15035(arg0, arg1) {
-    wasm.__wasm_bindgen_func_elem_15035(arg0, arg1);
+function __wasm_bindgen_func_elem_15374(arg0, arg1) {
+    wasm.__wasm_bindgen_func_elem_15374(arg0, arg1);
 }
 
-function __wasm_bindgen_func_elem_6221(arg0, arg1, arg2) {
-    wasm.__wasm_bindgen_func_elem_6221(arg0, arg1, addHeapObject(arg2));
+function __wasm_bindgen_func_elem_6560(arg0, arg1, arg2) {
+    wasm.__wasm_bindgen_func_elem_6560(arg0, arg1, addHeapObject(arg2));
 }
 
-function __wasm_bindgen_func_elem_3807(arg0, arg1, arg2) {
-    wasm.__wasm_bindgen_func_elem_3807(arg0, arg1, addHeapObject(arg2));
+function __wasm_bindgen_func_elem_4146(arg0, arg1, arg2) {
+    wasm.__wasm_bindgen_func_elem_4146(arg0, arg1, addHeapObject(arg2));
 }
 
-function __wasm_bindgen_func_elem_7861(arg0, arg1, arg2) {
-    wasm.__wasm_bindgen_func_elem_7861(arg0, arg1, addHeapObject(arg2));
+function __wasm_bindgen_func_elem_8200(arg0, arg1, arg2) {
+    wasm.__wasm_bindgen_func_elem_8200(arg0, arg1, addHeapObject(arg2));
 }
 
-function __wasm_bindgen_func_elem_15182(arg0, arg1, arg2) {
+function __wasm_bindgen_func_elem_15521(arg0, arg1, arg2) {
     try {
         const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        wasm.__wasm_bindgen_func_elem_15182(retptr, arg0, arg1, addHeapObject(arg2));
+        wasm.__wasm_bindgen_func_elem_15521(retptr, arg0, arg1, addHeapObject(arg2));
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
         if (r1) {
@@ -1159,8 +1232,8 @@ function __wasm_bindgen_func_elem_15182(arg0, arg1, arg2) {
     }
 }
 
-function __wasm_bindgen_func_elem_15184(arg0, arg1, arg2, arg3) {
-    wasm.__wasm_bindgen_func_elem_15184(arg0, arg1, addHeapObject(arg2), addHeapObject(arg3));
+function __wasm_bindgen_func_elem_15523(arg0, arg1, arg2, arg3) {
+    wasm.__wasm_bindgen_func_elem_15523(arg0, arg1, addHeapObject(arg2), addHeapObject(arg3));
 }
 
 

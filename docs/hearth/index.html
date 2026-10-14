@@ -180,15 +180,61 @@
     .join-request div { width: 100%; }
     .confirm-request { padding: 10px; margin: 8px 0; border: 1px solid #e8a44c; border-radius: 10px; display: flex; flex-wrap: wrap; gap: 8px; }
     .confirm-request div { width: 100%; word-break: break-word; }
+    /* The household settings screen (super user only; main.js shows the
+       button only when the desktop serves this device the view). Full width
+       on a desktop browser, where Mike edits the tables; stacked on a phone. */
+    #household-btn:not([hidden]) + #switch { margin-left: 0; }
+    #household-btn { margin-left: auto; font-size: 0.8rem; font-weight: 600; padding: 4px 10px; border-radius: 12px; background: #2a2620; color: #ece5da; flex-shrink: 0; }
+    #household-btn[hidden] { display: none; }
+    #household {
+      position: fixed; inset: 0; z-index: 40; background: #16130f; overflow-y: auto;
+      padding: max(10px, env(safe-area-inset-top)) 0 max(16px, env(safe-area-inset-bottom));
+    }
+    #household[hidden] { display: none; }
+    .hh-wrap { max-width: 640px; margin: 0 auto; }
+    .hh-section { margin: 0 16px 28px; }
+    .hh-section h3 { font-size: 1.05rem; color: #e8a44c; margin-bottom: 8px; }
+    .hh-msg { margin: 0 16px 12px; padding: 8px 12px; border-radius: 8px; font-size: 0.9rem; white-space: pre-wrap; background: #2a2620; }
+    .hh-msg.err { background: #4a221d; color: #f0b9b0; }
+    .hh-msg[hidden] { display: none; }
+    .hh-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    .hh-table th { text-align: left; font-weight: 600; color: #8d8474; padding: 6px 8px; border-bottom: 1px solid #4a4335; }
+    .hh-table td { padding: 6px 8px; border-bottom: 1px solid #2a2620; vertical-align: top; }
+    .hh-table code { font-size: 0.8rem; color: #8d8474; }
+    #household input, #household select {
+      font-size: 0.9rem; padding: 6px 8px; border-radius: 8px; flex: none;
+      border: 1px solid #4a4335; background: #221e18; color: #ece5da; max-width: 100%;
+    }
+    #household input[type="checkbox"] { padding: 0; }
+    #household button { font-size: 0.9rem; padding: 6px 14px; }
+    #household button.quiet { background: transparent; border: 1px solid #5a5244; color: #ece5da; }
+    .hh-tools { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+    .hh-tools label, .hh-inline { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+    .hh-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; align-items: center; }
+    @media (max-width: 799px) {
+      /* Phone: each row is a card, each cell labelled from its column. */
+      .hh-table thead { display: none; }
+      .hh-table tr { display: block; padding: 8px 0; border-bottom: 1px solid #4a4335; }
+      .hh-table td { display: block; border: 0; padding: 4px 0; }
+      .hh-table td[data-label]::before { content: attr(data-label); display: block; font-size: 0.75rem; color: #8d8474; }
+      #household input:not([type="checkbox"]), #household select { width: 100%; }
+      #household .hh-inline select { width: auto; }
+    }
+    @media (min-width: 800px) {
+      .hh-wrap { max-width: 1400px; padding: 0 16px; }
+      .hh-table td input:not([type="checkbox"]) { width: 100%; min-width: 6em; }
+    }
   </style>
 </head>
 <body>
   <header>
     <h1>Hearth</h1>
     <span id="status">loading…</span>
+    <button id="household-btn" type="button" hidden>Household</button>
     <button id="switch" type="button">Desktops ▾</button>
   </header>
   <div id="desktops" hidden></div>
+  <div id="household" hidden></div>
   <div id="notice" hidden></div>
   <div id="chat"></div>
   <div id="chips" hidden></div>
@@ -204,6 +250,6 @@
     first visit to a browser happens before any worker is installed, and this
     keeps a plain HTTP cache from pairing a new index.html with an old main.js.
   -->
-  <script type="module" src="./main.js?v=0.4.3"></script>
+  <script type="module" src="./main.js?v=0.4.4"></script>
 </body>
 </html>
