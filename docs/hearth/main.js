@@ -38,7 +38,7 @@
  * artefact, not three numbers to keep in your head. Reported to the desktop on
  * every request so "your client is stale" can be *said* rather than inferred
  * from behaviour nobody shipped. */
-const CLIENT_VERSION = "0.4.4";
+const CLIENT_VERSION = "0.4.5";
 /* Exposed so "which build is this phone actually running?" is answerable from
  * a console or a remote inspector without reading source. The whole class of
  * bug this file was reworked to fix was invisible precisely because nobody
@@ -428,10 +428,22 @@ function addFiles(files) {
 attachBtn.addEventListener("click", () => fileEl.click());
 fileEl.addEventListener("change", () => { addFiles(Array.from(fileEl.files || [])); fileEl.value = ""; });
 
+// The last message whose reply never arrived: sent again with the same
+// text, it keeps its id, so the desktop answers with the first send's reply
+// instead of running it twice (#66: a cold first turn timed out on the phone
+// while the desktop finished it).
+let unanswered = null;
+
+function messageId(text) {
+  if (unanswered && unanswered.text === text && Date.now() - unanswered.at < 60 * 60 * 1000) return unanswered.id;
+  return crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 async function send(isAuto = false) {
   const text = msgEl.value.trim();
   const files = attached.slice();
   if ((!text && !files.length) || sendBtn.disabled) return;
+  const msgId = messageId(text);
   msgEl.value = "";
   attached = [];
   renderChips();
@@ -460,8 +472,8 @@ async function send(isAuto = false) {
       }
     }
     const stream = ids.length
-      ? client.sendWith(serverId, text || "(see the attached files)", ids, CLIENT_VERSION)
-      : client.send(serverId, text, CLIENT_VERSION);
+      ? client.sendWith(serverId, text || "(see the attached files)", ids, CLIENT_VERSION, msgId)
+      : client.send(serverId, text, CLIENT_VERSION, msgId);
     const reader = stream.getReader();
     let received = false;
     while (true) {
@@ -508,6 +520,7 @@ async function send(isAuto = false) {
     addBubble("agent", `Send failed: ${e}`, "error");
     setStatus("error", true);
   } finally {
+    unanswered = outcome.ok ? null : { text, id: msgId, at: Date.now() };
     // Safety net for a stream that closes cleanly without an outcome: the
     // branches above remove it in order, and a second remove() is a no-op.
     pending.remove();
