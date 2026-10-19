@@ -38,7 +38,7 @@
  * artefact, not three numbers to keep in your head. Reported to the desktop on
  * every request so "your client is stale" can be *said* rather than inferred
  * from behaviour nobody shipped. */
-const CLIENT_VERSION = "0.4.5";
+const CLIENT_VERSION = "0.4.6";
 /* Exposed so "which build is this phone actually running?" is answerable from
  * a console or a remote inspector without reading source. The whole class of
  * bug this file was reworked to fix was invisible precisely because nobody
@@ -196,6 +196,8 @@ let history = [];
 try { history = JSON.parse(localStorage.getItem(HISTORY_KEY)) || []; } catch { /* corrupt cache */ }
 
 let client = null;
+// This device's key, kept so a dropped connection can get a fresh client (#71).
+let deviceSecret = null;
 /* True once the rendered conversation is the desktop's copy, not the cache. */
 let historySynced = false;
 /* Warnings already shown, so a chat reply does not repeat the load-time one. */
@@ -255,10 +257,15 @@ function addWorking() {
   chatEl.appendChild(div);
   chatEl.scrollTop = chatEl.scrollHeight;
   const start = Date.now();
-  const tick = () => { label.textContent = `working ${elapsed(Date.now() - start)}`; };
+  let doing = "working";
+  const tick = () => { label.textContent = `${doing} ${elapsed(Date.now() - start)}`; };
   tick();
   const timer = setInterval(tick, 1000);
-  return { remove() { clearInterval(timer); div.remove(); } };
+  return {
+    remove() { clearInterval(timer); div.remove(); },
+    // What the wait is now, e.g. "reconnecting…", so a dropped turn reads as in hand (#71).
+    note(text) { doing = text; tick(); },
+  };
 }
 
 function elapsed(ms) {
@@ -291,10 +298,10 @@ async function main() {
     setStatus("loading…");
     await init({ module_or_path: WASM_BIN });
     setStatus("starting iroh…");
-    let deviceSecret = null;
     try { deviceSecret = localStorage.getItem(DEVICE_KEY); } catch { /* private mode */ }
     client = await HearthClient.spawn(deviceSecret ?? undefined);
-    try { localStorage.setItem(DEVICE_KEY, client.secret_hex()); } catch { /* private mode: pairing won't survive reload */ }
+    deviceSecret = client.secret_hex();
+    try { localStorage.setItem(DEVICE_KEY, deviceSecret); } catch { /* private mode: pairing won't survive reload */ }
 
     // Ask the desktop whether this device is trusted before showing anything
     // about pairing. Whether we are paired is a question only the desktop can
@@ -318,6 +325,8 @@ async function main() {
     // failure honestly).
     setComposer(true);
     msgEl.focus();
+    // Replies to turns a killed or reloaded page left in flight (#71).
+    resumePending();
 
     const auto = new URLSearchParams(location.search).get("auto");
     if (auto) { msgEl.value = auto; send(true); }
@@ -439,6 +448,215 @@ function messageId(text) {
   return crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
+/* ---------------------------------------------------------------------------
+ * Replies that outlive the phone's attention (#71)
+ *
+ * A turn can run for minutes. If the phone is locked or the app backgrounded
+ * meanwhile, iOS suspends the page, iroh's keep-alives stop, and after 30 s the
+ * connection is gone, though the desktop finishes the turn and keeps its
+ * answer for an hour by (device, message id) (#66). So a dropped turn is not
+ * an error: the page sends the SAME message id again — after a backoff, when
+ * the page is visible again, or when the network comes back — and the desktop
+ * answers with the finished reply (or waits for the running one), never
+ * running the turn twice. Each attempt after a drop uses a fresh client
+ * endpoint: the one that died in suspension never recovers (a page refresh was
+ * the only cure). Turns in flight are kept in localStorage, so a page iOS
+ * killed outright still collects its reply when reopened. "Could not reach
+ * your desktop" is shown only when the whole budget has passed.
+ * ------------------------------------------------------------------------ */
+const PENDING_KEY = "hearth.pending.v1";
+// ?debug in the page URL logs each attempt and event to the console.
+const DEBUG = new URLSearchParams(location.search).has("debug");
+const dbg = (...a) => { if (DEBUG) console.log("hearth#71", new Date().toISOString(), ...a); };
+// The desktop keeps an answer for an hour (TURN_KEPT_FOR); trying for 15 min
+// covers a pocketed phone without retrying a dead desktop forever.
+const RETRY_BUDGET_MS = 15 * 60 * 1000;
+const RETRY_WAITS_MS = [1000, 2000, 5000, 10000, 20000, 30000];
+let wake = () => {};
+
+function loadPending() {
+  try { return JSON.parse(localStorage.getItem(PENDING_KEY) || "{}"); } catch { return {}; }
+}
+function savePending(all) {
+  try { localStorage.setItem(PENDING_KEY, JSON.stringify(all)); } catch { /* private mode: lost on reload */ }
+}
+function rememberTurn(job) {
+  const all = loadPending();
+  all[job.id] = { server: serverId, text: job.text, attachments: job.attachments, at: job.at };
+  savePending(all);
+}
+function forgetTurn(id) {
+  const all = loadPending();
+  delete all[id];
+  savePending(all);
+}
+
+/** Wait `ms`, or less if the page becomes visible or the network returns. */
+function pause(ms) {
+  return new Promise((resolve) => {
+    const t = setTimeout(done, ms);
+    function done() { clearTimeout(t); wake = () => {}; resolve(); }
+    wake = done;
+  });
+}
+for (const ev of ["online", "pageshow"]) window.addEventListener(ev, () => wake());
+// A frozen page (Chrome's page lifecycle) wakes with `resume`.
+document.addEventListener("resume", () => wake());
+
+// A page that slept past iroh's 30 s idle limit holds a dead connection, but
+// only finds out when its own timers catch up. A gap in this 1 s beat is the
+// sleep, seen from the inside: drop the attempt in flight and resend at once.
+let inFlight = null;
+let sleptAt = 0;
+// When the page last came back from a sleep, visible or not: the anchor for
+// the time-to-reply number (a page can report hidden for a moment as it wakes).
+let wokeAt = 0;
+let beat = Date.now();
+function checkSlept() {
+  const now = Date.now();
+  if (now - beat > 25000) wokeAt = now;
+  // Only when visible: a hidden page's timers are throttled, which is a gap
+  // too but not a sleep (its connection may be fine, and it is not reading).
+  if (now - beat > 25000 && !document.hidden) {
+    dbg("slept", now - beat, "ms; attempt in flight:", !!inFlight);
+    sleptAt = now;
+    if (inFlight) inFlight.cancel().catch(() => {});
+    wake();
+  }
+  beat = now;
+}
+setInterval(checkSlept, 1000);
+// The wake events check too, before the timer's next tick can.
+for (const ev of ["pageshow", "focus"]) window.addEventListener(ev, checkSlept);
+document.addEventListener("resume", checkSlept);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) checkSlept(); });
+document.addEventListener("visibilitychange", () => { if (!document.hidden) wake(); });
+
+/**
+ * A fresh client endpoint (same device key), replacing one a drop left dead.
+ * The old one is released first: a relay keeps one connection per device key,
+ * and two live endpoints with the same key would push each other off it.
+ */
+async function respawnClient() {
+  const old = client;
+  try { old?.free?.(); } catch { /* already gone */ }
+  try { client = await HearthClient.spawn(deviceSecret ?? undefined); } catch { client = old; /* next attempt tries again */ }
+}
+
+/**
+ * Run one chat turn to an outcome: `{ok, reply}` on a reply, or `{ok:false}`
+ * after an agent error, a refusal, or the whole budget without reaching the
+ * desktop. Every attempt carries the same message id.
+ */
+async function runTurn(job, pending) {
+  let attempt = 0;
+  let lastError = "";
+  while (true) {
+    let received = false;
+    let outcome = null;
+    const startedAt = Date.now();
+    dbg("attempt", attempt, job.id);
+    try {
+      const stream = job.attachments.length
+        ? client.sendWith(serverId, job.text || "(see the attached files)", job.attachments, CLIENT_VERSION, job.id)
+        : client.send(serverId, job.text, CLIENT_VERSION, job.id);
+      const reader = stream.getReader();
+      inFlight = reader;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const ev = value;
+        dbg("event", ev.type, ev.error || "");
+        if (ev.type === "connected") {
+          setStatus(attempt ? "reconnected, collecting the reply…" : "thinking…");
+          if (attempt) pending.note("collecting the reply…");
+        } else if (ev.type === "received") {
+          received = true;
+          pending.remove();
+          handleWarning(ev.warning);
+          if (ev.error) {
+            // The desktop answered but the agent failed (model down, etc.).
+            addBubble("agent", `Agent error: ${ev.error}`, "error");
+            setStatus("agent error", true);
+            outcome = { ok: false, reply: "" };
+          } else {
+            // A resumed turn's reply may already be in the transcript the
+            // page just fetched: show it once.
+            if (!(job.resumed && history.some((h) => h.role === "agent" && h.text === ev.reply))) {
+              addBubble("agent", ev.reply);
+              saveHistory("agent", ev.reply);
+            }
+            setStatus("ready");
+            outcome = { ok: true, reply: ev.reply };
+            if (wokeAt > job.at) noteWakeToReply(Date.now() - wokeAt);
+            // If the load-time catch-up failed, this reply proves the desktop
+            // is reachable again — fetch the real transcript now.
+            if (!historySynced) fetchHistory();
+          }
+        } else if (ev.type === "denied") {
+          // The desktop answered and refused us: unpaired (or just revoked).
+          received = true;
+          pending.remove();
+          setStatus("not paired", true);
+          offerPairing();
+          outcome = { ok: false, reply: "" };
+        } else if (ev.type === "closed" && ev.error && !received) {
+          lastError = ev.error;
+        }
+      }
+    } catch (e) {
+      lastError = String(e);
+      dbg("threw", lastError);
+    } finally {
+      inFlight = null;
+    }
+    if (outcome) return outcome;
+    // Dropped before a reply: the turn may well be running or done on the
+    // desktop. Try again with the same id, unless the budget is spent.
+    if (Date.now() - job.at >= RETRY_BUDGET_MS) {
+      pending.remove();
+      addBubble("agent", `Could not reach your desktop. Is hearth-desktop running?\n(${lastError})`, "error");
+      setStatus("desktop unreachable", true);
+      return { ok: false, reply: "" };
+    }
+    setStatus("connection lost, still waiting for the desktop…");
+    pending.note("reconnecting…");
+    // Woken from a sleep during this attempt: the desktop is likely done, ask now.
+    if (sleptAt < startedAt) await pause(RETRY_WAITS_MS[Math.min(attempt, RETRY_WAITS_MS.length - 1)]);
+    attempt++;
+    await respawnClient();
+  }
+}
+
+/**
+ * How long a reply took after the phone woke up: shown in the status line and
+ * kept (last 20) under hearth.wake.v1, so a real-phone test gives a real number
+ * rather than an impression (#71).
+ */
+const WAKE_LOG_KEY = "hearth.wake.v1";
+function noteWakeToReply(ms) {
+  const secs = Math.round(ms / 1000);
+  setStatus(`ready (reply ${secs}s after waking)`);
+  try {
+    const log = JSON.parse(localStorage.getItem(WAKE_LOG_KEY) || "[]");
+    log.push({ at: new Date().toISOString(), secs });
+    localStorage.setItem(WAKE_LOG_KEY, JSON.stringify(log.slice(-20)));
+  } catch { /* private mode */ }
+}
+
+/** Turns a killed or reloaded page left in flight: collect their replies. */
+async function resumePending() {
+  const all = loadPending();
+  for (const [id, p] of Object.entries(all)) {
+    // Another desktop's turn, or older than the desktop keeps answers: drop it.
+    if (p.server !== serverId || Date.now() - p.at > 60 * 60 * 1000) { forgetTurn(id); continue; }
+    const job = { id, text: p.text, attachments: p.attachments || [], at: p.at, resumed: true };
+    const pending = addWorking();
+    const outcome = await runTurn(job, pending);
+    if (outcome.ok || Date.now() - job.at >= RETRY_BUDGET_MS) forgetTurn(id);
+  }
+}
+
 async function send(isAuto = false) {
   const text = msgEl.value.trim();
   const files = attached.slice();
@@ -471,50 +689,10 @@ async function send(isAuto = false) {
         throw new Error(`${file.name} didn't send: ${String(e).replace(/^Error: /, "")}`);
       }
     }
-    const stream = ids.length
-      ? client.sendWith(serverId, text || "(see the attached files)", ids, CLIENT_VERSION, msgId)
-      : client.send(serverId, text, CLIENT_VERSION, msgId);
-    const reader = stream.getReader();
-    let received = false;
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      const ev = value;
-      if (ev.type === "connected") {
-        setStatus("thinking…");
-      } else if (ev.type === "received") {
-        received = true;
-        pending.remove();
-        handleWarning(ev.warning);
-        if (ev.error) {
-          // The desktop answered but the agent failed (model down, etc.).
-          addBubble("agent", `Agent error: ${ev.error}`, "error");
-          setStatus("agent error", true);
-        } else {
-          addBubble("agent", ev.reply);
-          saveHistory("agent", ev.reply);
-          setStatus("ready");
-          outcome = { ok: true, reply: ev.reply };
-          // If the load-time catch-up failed, this reply proves the desktop
-          // is reachable again — fetch the real transcript now.
-          if (!historySynced) fetchHistory();
-        }
-      } else if (ev.type === "denied") {
-        // The desktop answered and refused us: unpaired (or just revoked).
-        received = true;
-        pending.remove();
-        setStatus("not paired", true);
-        offerPairing();
-      } else if (ev.type === "closed") {
-        if (ev.error && !received) {
-          // Never connected or dropped before replying: the desktop itself
-          // is unreachable — distinct from an agent error above.
-          pending.remove();
-          addBubble("agent", `Could not reach your desktop. Is hearth-desktop running?\n(${ev.error})`, "error");
-          setStatus("desktop unreachable", true);
-        }
-      }
-    }
+    const job = { id: msgId, text, attachments: ids, at: Date.now() };
+    rememberTurn(job);
+    outcome = await runTurn(job, pending);
+    if (outcome.ok || Date.now() - job.at >= RETRY_BUDGET_MS) forgetTurn(job.id);
   } catch (e) {
     pending.remove();
     addBubble("agent", `Send failed: ${e}`, "error");
