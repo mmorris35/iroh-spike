@@ -160,6 +160,9 @@ self.addEventListener("push", (event) => {
     self.registration.showNotification(n.title || "Hearth", {
       body: n.body || "Your reply is ready.",
       icon: "./icon-192.png",
+      // Never silent: a reminder that does not buzz is not a reminder.
+      silent: false,
+      vibrate: [200, 100, 200],
       data: { navigate: n.navigate },
     }),
   );

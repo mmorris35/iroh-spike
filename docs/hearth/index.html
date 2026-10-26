@@ -151,6 +151,17 @@
       border: 1px solid #4a4335; background: #221e18; color: #ece5da;
       outline: none;
     }
+    /* The composer grows with what is typed, up to about eight lines, then
+       scrolls. Enter is a newline; Send sends (main.js). Buttons keep the
+       one-line height and sit at the bottom as it grows. */
+    #composer { align-items: flex-end; }
+    #composer button { height: 46px; }
+    #msg {
+      flex: 1; font: inherit; font-size: 1rem; line-height: 1.25; padding: 12px;
+      border-radius: 22px; border: 1px solid #4a4335; background: #221e18;
+      color: #ece5da; outline: none; resize: none; box-sizing: border-box;
+      height: 46px; max-height: 12.5rem; overflow-y: auto;
+    }
     button {
       font-size: 1rem; font-weight: 700; padding: 0 20px;
       border-radius: 22px; border: 0; background: #e8a44c; color: #16130f;
@@ -241,7 +252,7 @@
   <form id="composer">
     <button id="attach" type="button" aria-label="Attach files" title="Attach files" disabled>📎</button>
     <input id="file" type="file" multiple hidden>
-    <input id="msg" placeholder="Message your agent" autocomplete="off">
+    <textarea id="msg" rows="1" placeholder="Message your agent" autocomplete="off" enterkeyhint="enter"></textarea>
     <button id="send" disabled>Send</button>
   </form>
   <!--

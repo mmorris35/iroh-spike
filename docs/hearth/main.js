@@ -657,12 +657,21 @@ async function resumePending() {
   }
 }
 
+// Fit the composer to its text; #msg's max-height caps it and it scrolls past
+// that. Called on typing and after send() clears it. Code that sets the text
+// must call it too (today only ?auto= does, and it sends at once).
+function fitComposer() {
+  msgEl.style.height = "auto";
+  msgEl.style.height = `${msgEl.scrollHeight + 2}px`;
+}
+
 async function send(isAuto = false) {
   const text = msgEl.value.trim();
   const files = attached.slice();
   if ((!text && !files.length) || sendBtn.disabled) return;
   const msgId = messageId(text);
   msgEl.value = "";
+  fitComposer();
   attached = [];
   renderChips();
   setComposer(false);
@@ -712,6 +721,12 @@ async function send(isAuto = false) {
 }
 
 form.addEventListener("submit", (e) => { e.preventDefault(); send(); });
+// Enter is a newline (a textarea does that itself); Cmd/Ctrl+Enter sends, for
+// a keyboard.
+msgEl.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !e.isComposing) { e.preventDefault(); send(); }
+});
+msgEl.addEventListener("input", fitComposer);
 switchBtn.addEventListener("click", toggleDesktops);
 
 // Swipe right to open the desktop picker, as Telegram opens its chat list;
