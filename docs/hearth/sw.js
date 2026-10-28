@@ -36,7 +36,7 @@
  * VERSION is stamped by scripts/set-client-version.sh alongside web/main.js
  * and src/version.rs. Bumping it invalidates both caches.
  */
-const VERSION = "0.4.6";
+const VERSION = "0.4.7";
 const SHELL_CACHE = `hearth-shell-${VERSION}`;
 const WASM_CACHE = `hearth-wasm-${VERSION}`;
 
@@ -54,6 +54,7 @@ const SHELL = [
   "./",
   "./index.html",
   "./main.js",
+  "./files.js",
   "./manifest.webmanifest",
   "./icon-192.png",
   "./apple-touch-icon.png",

@@ -3,7 +3,6 @@
   "short_name": "Hearth",
   "description": "Your own agent, on your own computer, from your phone.",
   "display": "standalone",
-  "orientation": "portrait",
   "background_color": "#16130f",
   "theme_color": "#16130f",
   "scope": "./",

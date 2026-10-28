@@ -38,7 +38,7 @@
  * artefact, not three numbers to keep in your head. Reported to the desktop on
  * every request so "your client is stale" can be *said* rather than inferred
  * from behaviour nobody shipped. */
-const CLIENT_VERSION = "0.4.6";
+const CLIENT_VERSION = "0.4.7";
 /* Exposed so "which build is this phone actually running?" is answerable from
  * a console or a remote inspector without reading source. The whole class of
  * bug this file was reworked to fix was invisible precisely because nobody
@@ -56,6 +56,10 @@ window.HEARTH_CLIENT_VERSION = CLIENT_VERSION;
 const WASM_JS = new URL(`./wasm/hearth.js?v=${CLIENT_VERSION}`, import.meta.url);
 const WASM_BIN = new URL(`./wasm/hearth_bg.wasm?v=${CLIENT_VERSION}`, import.meta.url);
 const { default: init, HearthClient } = await import(WASM_JS.href);
+/* How an attached file is shown: an allow-list judged from its bytes (B2 in
+ * Bilby's review of #79). Versioned like the wasm so a new shell never runs
+ * last build's copy. */
+const { prepareFile, presentFile } = await import(new URL(`./files.js?v=${CLIENT_VERSION}`, import.meta.url).href);
 
 const chatEl = document.getElementById("chat");
 const statusEl = document.getElementById("status");
@@ -232,14 +236,74 @@ function showNotice(text, actionLabel, action) {
 function addBubble(role, text, cls = "") {
   const div = document.createElement("div");
   div.className = `msg ${role} ${cls}`.trim();
+  // A file the agent attached is a `[file <id>: <name>]` line under its reply
+  // (src/protocol.rs, file_marker), written by the desktop's engine, never by
+  // the model. Only an agent's line is read as one.
+  const { body, files } = role === "agent" ? splitFiles(text) : { body: text, files: [] };
   // Render a deliberately tiny subset of markdown. Models emit **bold** and
   // *italic* by reflex even when told not to, and raw asterisks on screen make
   // the whole thing look broken. Built from a text node and element nodes
   // rather than innerHTML so model output can never inject markup.
-  renderInline(div, text);
+  renderInline(div, body);
+  for (const f of files) div.appendChild(fileCard(f));
   chatEl.appendChild(div);
   chatEl.scrollTop = chatEl.scrollHeight;
   return div;
+}
+
+// ---- Files from the agent -----------------------------------------------
+
+const FILE_LINE = /^\[file ([0-9a-fA-F]{32}): (.+)\]$/;
+
+/* A reply's text without its file lines, and the files they name. */
+function splitFiles(text) {
+  const files = [];
+  const kept = [];
+  for (const line of String(text).split("\n")) {
+    const m = FILE_LINE.exec(line.trim());
+    if (m) files.push({ id: m[1], name: m[2] });
+    else kept.push(line);
+  }
+  return { body: files.length ? kept.join("\n").trimEnd() : text, files };
+}
+
+/* Fetched files by id, as object URLs, so a second tap does not fetch again. */
+const fetchedFiles = new Map();
+
+/* A file under a reply: tap to fetch it from the desktop over iroh (the same
+ * encrypted, paired-only connection a message uses), then a PNG, JPEG, GIF or
+ * WebP shows inline, a PDF opens in the browser's viewer, and anything else
+ * only downloads (web/files.js). */
+function fileCard(f) {
+  const card = document.createElement("div");
+  card.className = "file";
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.textContent = `Open ${f.name}`;
+  const note = document.createElement("span");
+  note.className = "file-note";
+  card.append(btn, note);
+  btn.addEventListener("click", async () => {
+    if (!client) { note.textContent = "not connected yet"; return; }
+    btn.disabled = true;
+    note.textContent = "fetching…";
+    try {
+      let got = fetchedFiles.get(f.id);
+      if (!got) {
+        const file = await client.download(serverId, f.id, CLIENT_VERSION);
+        got = prepareFile(file.name, file.data, file.mime);
+        try { file.free(); } catch { /* already freed */ }
+        fetchedFiles.set(f.id, got);
+      }
+      note.textContent = "";
+      presentFile(card, btn, got);
+    } catch (e) {
+      note.textContent = String(e).includes("DENIED: ") ? "this device is not paired" : `couldn't fetch it: ${e}`;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+  return card;
 }
 
 // A turn can run for minutes while the agent reads files or runs tools, and a
@@ -749,14 +813,29 @@ document.addEventListener("touchend", (e) => {
   swipe = null;
   if (!quick || Math.abs(dx) < 60 || Math.abs(dy) > Math.abs(dx) / 2) return;
   if (dx > 0 && menuEl.hidden) toggleDesktops();
-  else if (dx < 0 && !menuEl.hidden) menuEl.hidden = true;
+  else if (dx < 0 && !menuEl.hidden) closeDesktops();
 }, { passive: true });
 renderSwitcher();
+// In a window wide enough (index.html's 960px layout: iPad landscape, a 13-inch
+// iPad either way up, a wide Stage Manager window) the desktop list is docked
+// beside the chat and stays open.
+const docked = window.matchMedia("(min-width: 960px) and (min-height: 500px)");
+if (docked.matches) toggleDesktops();
+docked.addEventListener("change", () => {
+  if (docked.matches) closeDesktops();
+  else if (!menuEl.querySelector("form")) menuEl.hidden = true; // a dialog stays up
+});
 main();
 
 /* ---------------------------------------------------------------------------
  * Switching desktops
  * ------------------------------------------------------------------------ */
+
+/* "Close" for the desktop list; where it is docked, back to the list. */
+function closeDesktops() {
+  menuEl.hidden = true;
+  if (docked.matches) toggleDesktops();
+}
 
 function renderSwitcher() {
   const current = servers.find((s) => s.id === serverId);
@@ -779,7 +858,7 @@ function desktopRow(s) {
   const row = document.createElement("button");
   row.type = "button";
   row.className = `agent-row${here ? " current" : ""}`;
-  row.onclick = () => { if (here) menuEl.hidden = true; else openServer(s.id); };
+  row.onclick = () => { if (here) closeDesktops(); else openServer(s.id); };
   const name = serverName(s);
   const avatar = document.createElement("span");
   avatar.className = "avatar";
@@ -822,7 +901,7 @@ function toggleDesktops() {
   head.className = "list-head";
   const title = document.createElement("h2");
   title.textContent = "Desktops";
-  const close = menuButton("✕", "", () => { menuEl.hidden = true; });
+  const close = menuButton("✕", "", closeDesktops);
   close.setAttribute("aria-label", "Close");
   head.append(title, close);
   menuEl.appendChild(head);
@@ -886,7 +965,7 @@ async function sendSubscription(sub) {
 }
 
 async function enableNotifications() {
-  menuEl.hidden = true;
+  closeDesktops();
   if (!client) { setStatus("still starting — try again in a moment", true); return; }
   // The permission prompt first, while this is still the tap: iOS shows it
   // only from a user gesture, and any await before it spends the gesture.
@@ -904,6 +983,7 @@ async function enableNotifications() {
     await sendSubscription(sub);
     try { localStorage.setItem(PUSH_KEY, serverId); } catch { /* private mode */ }
     setStatus("notifications on");
+    if (docked.matches) closeDesktops(); // redraw the docked list's switch
   } catch (e) {
     setStatus("could not turn notifications on", true);
     addBubble("agent", `Notifications: ${e}`, "error");
@@ -911,7 +991,7 @@ async function enableNotifications() {
 }
 
 async function disableNotifications() {
-  menuEl.hidden = true;
+  closeDesktops();
   // The desktop keeps the old subscription until its next push comes back
   // 410, and then forgets it. Nothing to tell it now.
   try {
@@ -920,6 +1000,7 @@ async function disableNotifications() {
   } catch { /* already gone */ }
   try { localStorage.removeItem(PUSH_KEY); } catch { /* private mode */ }
   setStatus("notifications off");
+  if (docked.matches) closeDesktops();
 }
 
 async function resyncPush() {
@@ -979,7 +1060,7 @@ function ask(message, { value = null, okLabel = "OK", alt = null } = {}) {
       row.prepend(altBtn);
     }
     f.appendChild(row);
-    const done = (answer) => { menuEl.hidden = true; menuEl.replaceChildren(); resolve(answer); };
+    const done = (answer) => { menuEl.replaceChildren(); closeDesktops(); resolve(answer); };
     cancel.onclick = () => done(null);
     if (altBtn) altBtn.onclick = () => done(alt.value);
     f.onsubmit = (e) => { e.preventDefault(); done(input ? input.value : true); };
@@ -1139,6 +1220,7 @@ async function renameDesktop(s) {
   s.name = name.trim().slice(0, 40);
   saveServers();
   renderSwitcher();
+  if (docked.matches) closeDesktops(); // the docked list shows the new name
 }
 
 /* Forgetting a desktop here does not unpair this phone — the desktop's

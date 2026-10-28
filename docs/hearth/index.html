@@ -30,7 +30,12 @@
     address to localStorage as a second line of defence.)
   -->
   <link rel="manifest" href="./manifest.webmanifest">
+  <!-- Home Screen icons: iPhone (180), iPad Pro (167), every other iPad (152).
+       The unsized one stays first as the fallback older iOS picks. -->
   <link rel="apple-touch-icon" href="./apple-touch-icon.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png">
+  <link rel="apple-touch-icon" sizes="167x167" href="./apple-touch-icon-167.png">
+  <link rel="apple-touch-icon" sizes="152x152" href="./apple-touch-icon-152.png">
   <link rel="icon" href="./icon-192.png" sizes="192x192" type="image/png">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -54,6 +59,15 @@
       background: #2a2620; color: #ece5da;
       flex-shrink: 0; max-width: 45%; white-space: nowrap;
       overflow: hidden; text-overflow: ellipsis;
+      /* The ellipsis needs overflow: hidden, which would clip the hit area
+         below, so this one is tall for real: 11px more padding above and
+         below, given back by the margins, and the pill drawn by ::before
+         exactly where the background used to be. Same layout, 44 pt target. */
+      padding-block: 15px; margin-block: -11px; background: none; z-index: 0;
+    }
+    #switch::before {
+      content: ""; position: absolute; inset: 11px 0; z-index: -1;
+      background: #2a2620; border-radius: 12px;
     }
     /* Which desktop this phone is talking to: a full-screen list that slides
        in from the left, like Telegram's chat list (Mike, 2026-10-12: the
@@ -133,6 +147,11 @@
     .msg.agent { align-self: flex-start; background: #2a2620; border-bottom-left-radius: 4px; }
     .msg.error { align-self: flex-start; background: #4a221d; color: #f0b9b0; }
     .msg.pending { opacity: 0.7; font-variant-numeric: tabular-nums; }
+    .msg .file { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
+    .msg .file button { padding: 4px 10px; background: #4a4335; color: #ece5da; }
+    .msg .file-link { color: #e8c88a; }
+    .msg .file-note { opacity: 0.8; font-size: 0.85rem; }
+    .msg .file-preview { display: block; max-width: 100%; border-radius: 8px; flex-basis: 100%; }
     .dots { display: inline-flex; gap: 4px; margin-right: 8px; vertical-align: middle; }
     .dots i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: dot 1.2s infinite ease-in-out both; }
     .dots i:nth-child(2) { animation-delay: 0.15s; }
@@ -155,18 +174,37 @@
        scrolls. Enter is a newline; Send sends (main.js). Buttons keep the
        one-line height and sit at the bottom as it grows. */
     #composer { align-items: flex-end; }
-    #composer button { height: 46px; }
+    /* One line of text plus padding: 46px at the default text size, and
+       taller, not clipped, when the text is bigger (docs/IPAD.md). */
+    #composer button { height: max(46px, 1.25rem + 26px); }
+    /* A composer with less than 20rem inside it (a 320pt Slide Over window,
+       or very large text) gives the buttons' padding to the text box. Every
+       iPhone has more than that at the default text size (the SE: 343px). */
+    #composer { container: composer / inline-size; }
+    @container composer (max-width: 20rem) {
+      #send { padding: 0 10px; }
+      #attach { padding: 0 4px; }
+      #msg::placeholder { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    }
     #msg {
       flex: 1; font: inherit; font-size: 1rem; line-height: 1.25; padding: 12px;
       border-radius: 22px; border: 1px solid #4a4335; background: #221e18;
       color: #ece5da; outline: none; resize: none; box-sizing: border-box;
-      height: 46px; max-height: 12.5rem; overflow-y: auto;
+      height: max(46px, 1.25rem + 26px); max-height: 12.5rem; overflow-y: auto;
     }
     button {
       font-size: 1rem; font-weight: 700; padding: 0 20px;
       border-radius: 22px; border: 0; background: #e8a44c; color: #16130f;
     }
     button:disabled { background: #4a4335; color: #8d8474; }
+    /* 44 pt touch targets (Apple HIG) without changing how anything looks: a
+       button smaller than that gets an invisible hit area that is. Absolutely
+       positioned, so it takes no space; a finger, a Pencil tip and a trackpad
+       click all land on it the same way. */
+    button { position: relative; }
+    button::after {
+      content: ""; position: absolute; inset: min(0px, 50% - 22px);
+    }
     /* Attachments waiting to go with the next message. Removable until Send. */
     #attach { padding: 0 12px; font-size: 1.15rem; background: #2a2620; color: #ece5da; }
     #attach:disabled { background: #221e18; color: #8d8474; }
@@ -235,6 +273,80 @@
       .hh-wrap { max-width: 1400px; padding: 0 16px; }
       .hh-table td input:not([type="checkbox"]) { width: 100%; min-width: 6em; }
     }
+
+    /* ---- iPad, and any other window this wide (docs/IPAD.md) -------------
+       Laid out by the window's width, never by device: a Split View tile or a
+       Stage Manager window gets whatever its width calls for, and a phone is
+       never told it is one. Below 700px everything above applies untouched —
+       that is the phone layout, and it is also what a narrow iPad window gets.
+       The min-height keeps a phone on its side (at most 440pt tall) on the
+       phone layout even when it is 900+ wide.
+
+       700px and up: the page spans the window, and the conversation sits in a
+       centred column of readable width (--column) rather than a 640px strip
+       or a full-width sprawl. The composer and attachments share the column,
+       so Send stays under the conversation instead of at the far edge. */
+    @media (min-width: 700px) and (min-height: 500px) {
+      body { max-width: none; --column: 48rem; }
+      header {
+        padding-top: max(12px, env(safe-area-inset-top));
+        padding-left: max(16px, env(safe-area-inset-left));
+        padding-right: max(16px, env(safe-area-inset-right));
+      }
+      #chat, #chips, #composer {
+        padding-left: max(16px, env(safe-area-inset-left), (100% - var(--column)) / 2);
+        padding-right: max(16px, env(safe-area-inset-right), (100% - var(--column)) / 2);
+      }
+      #notice {
+        margin-left: max(16px, (100% - var(--column)) / 2);
+        margin-right: max(16px, (100% - var(--column)) / 2);
+      }
+      /* The column is a container, so bubbles size to the column they are in
+         (narrower once the desktop list is docked beside it), not the window. */
+      #chat { container: chat / inline-size; }
+      @container chat (min-width: 36rem) {
+        .msg { max-width: min(82%, 40rem); line-height: 1.4; }
+      }
+      /* The desktop list opens as a drawer from the left edge instead of a
+         640px sheet floating in the middle of the screen. */
+      #desktops {
+        max-width: min(400px, 100%); margin: 0;
+        border-right: 1px solid #2a2620; box-shadow: 8px 0 24px rgb(0 0 0 / 0.45);
+        padding-left: env(safe-area-inset-left);
+      }
+    }
+
+    /* 960px and up: room for the desktop list beside the chat, so it stays
+       docked there — the iPad's sidebar — and the header button that opens it
+       on a phone is not needed. The chat keeps at least 620px. */
+    @media (min-width: 960px) and (min-height: 500px) {
+      body {
+        display: grid;
+        grid-template-columns: clamp(280px, 28vw, 360px) minmax(0, 1fr);
+        grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+      }
+      header { grid-area: 1 / 2; }
+      #notice { grid-area: 2 / 2; }
+      #chat { grid-area: 3 / 2; }
+      #chips { grid-area: 4 / 2; }
+      #composer { grid-area: 5 / 2; }
+      #desktops {
+        position: static; grid-area: 1 / 1 / -1 / 2; z-index: auto;
+        max-width: none; animation: none; box-shadow: none;
+      }
+      #switch, #desktops .list-head button { display: none; }
+    }
+
+    /* A trackpad or mouse on iPad (or any pointer that hovers): show what is
+       clickable. Touch-only screens never match, so a tap leaves no sticky
+       highlight behind. */
+    @media (any-hover: hover) {
+      button:not(:disabled) { cursor: pointer; }
+      button:not(:disabled):hover { filter: brightness(1.12); }
+      .agent-row:hover, .menu-item:not(:disabled):hover { background: #2a2620; filter: none; }
+    }
+    /* Keyboard focus (iPad with a hardware keyboard and Full Keyboard Access). */
+    button:focus-visible { outline: 2px solid #e8a44c; outline-offset: 2px; }
   </style>
 </head>
 <body>
@@ -261,6 +373,6 @@
     first visit to a browser happens before any worker is installed, and this
     keeps a plain HTTP cache from pairing a new index.html with an old main.js.
   -->
-  <script type="module" src="./main.js?v=0.4.6"></script>
+  <script type="module" src="./main.js?v=0.4.7"></script>
 </body>
 </html>
