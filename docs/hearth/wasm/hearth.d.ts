@@ -91,9 +91,6 @@ export class HearthClient {
      * `pushManager.subscribe` takes as `applicationServerKey`.
      */
     pushKey(server_id: string, client_version?: string | null): Promise<string>;
-    /**
-     * Revoke a device by its full id (super user only).
-     */
     revokeDevice(server_id: string, device: string, client_version?: string | null): Promise<void>;
     /**
      * The device secret to persist (hex). Never leaves the browser.
@@ -111,6 +108,14 @@ export class HearthClient {
      * `attachments` is the list of ids those uploads resolved to.
      */
     sendWith(server_id: string, message: string, attachments: string[], client_version?: string | null, msg_id?: string | null): ReadableStream;
+    /**
+     * Revoke a device by its full id (super user only).
+     * Set switch A (`child_sees_parent`) and/or B (`parent_sees_child`) of
+     * this device's person's pair with `child` (parents and the super user
+     * only; the desktop decides and its reason is the error). `null` leaves
+     * a switch as it is.
+     */
+    setVisibility(server_id: string, child: string, child_sees_parent?: boolean | null, parent_sees_child?: boolean | null, client_version?: string | null): Promise<void>;
     /**
      * Spawn with this device's stable key. `secret_hex` is the persisted
      * device secret (from a previous `secret_hex()` call, kept by the page
@@ -196,6 +201,7 @@ export interface InitOutput {
     readonly hearthclient_secret_hex: (a: number, b: number) => void;
     readonly hearthclient_send: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
     readonly hearthclient_sendWith: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => void;
+    readonly hearthclient_setVisibility: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => number;
     readonly hearthclient_spawn: (a: number, b: number) => number;
     readonly hearthclient_subscribe: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => number;
     readonly hearthclient_upload: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => number;
@@ -215,15 +221,15 @@ export interface InitOutput {
     readonly intounderlyingsource_cancel: (a: number) => void;
     readonly intounderlyingsource_pull: (a: number, b: number) => number;
     readonly ring_core_0_17_14__bn_mul_mont: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
-    readonly __wasm_bindgen_func_elem_15536: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_15538: (a: number, b: number, c: number, d: number) => void;
-    readonly __wasm_bindgen_func_elem_6611: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_4204: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_8259: (a: number, b: number, c: number) => void;
-    readonly __wasm_bindgen_func_elem_6412: (a: number, b: number) => void;
-    readonly __wasm_bindgen_func_elem_7515: (a: number, b: number) => void;
-    readonly __wasm_bindgen_func_elem_7556: (a: number, b: number) => void;
-    readonly __wasm_bindgen_func_elem_15389: (a: number, b: number) => void;
+    readonly __wasm_bindgen_func_elem_15615: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_15617: (a: number, b: number, c: number, d: number) => void;
+    readonly __wasm_bindgen_func_elem_6690: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_4283: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_8338: (a: number, b: number, c: number) => void;
+    readonly __wasm_bindgen_func_elem_6491: (a: number, b: number) => void;
+    readonly __wasm_bindgen_func_elem_7594: (a: number, b: number) => void;
+    readonly __wasm_bindgen_func_elem_7635: (a: number, b: number) => void;
+    readonly __wasm_bindgen_func_elem_15468: (a: number, b: number) => void;
     readonly __wbindgen_export: (a: number, b: number) => number;
     readonly __wbindgen_export2: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_export3: (a: number) => void;

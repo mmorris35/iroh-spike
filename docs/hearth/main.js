@@ -38,12 +38,25 @@
  * artefact, not three numbers to keep in your head. Reported to the desktop on
  * every request so "your client is stale" can be *said* rather than inferred
  * from behaviour nobody shipped. */
-const CLIENT_VERSION = "0.4.7";
+const CLIENT_VERSION = "0.4.11";
 /* Exposed so "which build is this phone actually running?" is answerable from
  * a console or a remote inspector without reading source. The whole class of
  * bug this file was reworked to fix was invisible precisely because nobody
  * could ask that question. */
 window.HEARTH_CLIENT_VERSION = CLIENT_VERSION;
+
+/* Chrome and Edge offer their own install prompt through beforeinstallprompt.
+ * It fires once, early, and is only usable if kept, so it is caught here,
+ * before the first await below can let it slip past, and held for the install
+ * card. If the card is already up when it arrives, the card swaps its written
+ * instructions for an Install button. */
+let installPrompt = null;
+window.addEventListener("beforeinstallprompt", (e) => {
+  e.preventDefault(); // keep Chrome's own mini-infobar out of the way; the card asks
+  installPrompt = e;
+  const how = document.querySelector("#install-card .install-how");
+  if (how) renderInstallHow(how);
+});
 
 /* The wasm is loaded through a *dynamic* import with the build version in the
  * query, and `init` is handed an equally versioned URL for the binary itself
@@ -74,6 +87,9 @@ const switchBtn = document.getElementById("switch");
 const menuEl = document.getElementById("desktops");
 const householdBtn = document.getElementById("household-btn");
 const householdEl = document.getElementById("household");
+const threadsEl = document.getElementById("threads");
+const visibilityBtn = document.getElementById("visibility-btn");
+const visibilityEl = document.getElementById("visibility");
 
 const probing = new URLSearchParams(location.search).has("probe");
 /** Report to the dev server's log (a deliberate 404). No-op-ish in production. */
@@ -204,6 +220,22 @@ let client = null;
 let deviceSecret = null;
 /* True once the rendered conversation is the desktop's copy, not the cache. */
 let historySynced = false;
+/* This device's person, by name, as the desktop has it (history tells us; a
+ * household only). Used to label what we send the way a reload will label
+ * it: the transcript is one conversation shared by every device, and who
+ * said what is part of it, on every phone, for every turn. */
+let youName = null;
+try { youName = localStorage.getItem(`hearth-you-${serverId}`); } catch { /* private mode */ }
+/* Threads (B2-vis, docs/HOUSEHOLD.md "Threads"): every thread the desktop
+ * lets this device read, own first, each `{owner, name, turns}`. The page
+ * shows a tab per thread when there is more than one and renders the active
+ * one; who may read what is the desktop's decision (`threads::can_read`),
+ * never the page's. `history` above is the own thread's turns (the cache).
+ * `switches` are this parent's own (parent, kid) pairs, as the desktop
+ * serves them; the Visibility panel flips them with `setVisibility`. */
+let threads = [];
+let activeThread = null; // the owner id on screen; null = this device's own
+let switches = [];
 /* Warnings already shown, so a chat reply does not repeat the load-time one. */
 const shownNotices = new Set();
 
@@ -233,9 +265,18 @@ function showNotice(text, actionLabel, action) {
   noticeEl.hidden = false;
 }
 
-function addBubble(role, text, cls = "") {
+function addBubble(role, text, cls = "", from = null) {
   const div = document.createElement("div");
   div.className = `msg ${role} ${cls}`.trim();
+  // Who said it, when the desktop says: a person on a user turn, a sender
+  // (a bot's runtime) on a line said through the outbox. One field, both
+  // kinds. A text node, like everything else here.
+  if (from) {
+    const who = document.createElement("span");
+    who.className = "from";
+    who.textContent = from;
+    div.appendChild(who);
+  }
   // A file the agent attached is a `[file <id>: <name>]` line under its reply
   // (src/protocol.rs, file_marker), written by the desktop's engine, never by
   // the model. Only an agent's line is read as one.
@@ -337,26 +378,67 @@ function elapsed(ms) {
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
-function saveHistory(role, text) {
-  history.push({ role, text });
+function saveHistory(role, text, from = null) {
+  history.push(from ? { role, text, from } : { role, text });
   // Cap the display cache; the desktop holds the real transcript.
   if (history.length > HISTORY_LIMIT) history = history.slice(-HISTORY_LIMIT);
+  if (threads.length) threads[0].turns = history;
   try { localStorage.setItem(HISTORY_KEY, JSON.stringify(history)); } catch { /* quota */ }
+}
+
+/* One wire turn as the page keeps it. */
+function toMsg(t) {
+  const role = t.role === "user" ? "user" : "agent";
+  return t.from ? { role, text: t.text, from: t.from } : { role, text: t.text };
+}
+
+/* Render the tabs and the active thread. Only the own thread takes messages;
+ * another's is read here, never written to (a send lands in your own). */
+function renderThreads() {
+  const own = threads[0];
+  const active = threads.find((t) => t.owner === activeThread) || own;
+  activeThread = active === own ? null : active.owner;
+  threadsEl.replaceChildren();
+  threadsEl.hidden = threads.length < 2;
+  if (threads.length > 1) {
+    for (const t of threads) {
+      const tab = document.createElement("button");
+      tab.type = "button";
+      tab.className = `thread-tab${t === active ? " active" : ""}`;
+      tab.textContent = t === own ? (youName ? `${youName} (you)` : "You") : t.name;
+      tab.onclick = () => { activeThread = t === own ? null : t.owner; renderThreads(); };
+      threadsEl.appendChild(tab);
+    }
+  }
+  chatEl.replaceChildren();
+  chatEl.classList.remove("stale");
+  for (const m of active.turns) addBubble(m.role, m.text, "", m.from);
+  const mine = active === own;
+  msgEl.disabled = !mine;
+  msgEl.placeholder = mine ? "Message your agent" : `${active.name}'s thread (read only)`;
+  setComposer(mine);
 }
 
 async function main() {
   registerServiceWorker();
 
   if (!serverId) {
-    setStatus("no desktop id in URL", true);
-    addBubble("agent", "This link is missing the desktop's id. Open the exact link (or QR) your desktop shows — it ends with #<endpoint-id> — or tap Desktops above and paste it.", "error");
+    // A bare link, no desktop id: the family landing (FAMILY-PLAN G1). In a
+    // tab, install first; the desktop is added inside the installed app. In
+    // the installed app with no desktop yet, ask for the link or QR code.
+    setStatus("no desktop yet", true);
+    if (isStandalone()) {
+      addBubble("agent", "Ask for your link or QR code, then tap Desktops above and scan or paste it.");
+    } else {
+      offerInstallFirst();
+    }
     return;
   }
   // Instant paint from the offline cache — visibly provisional (dimmed via
   // #chat.stale) so stale local state is never presented as the conversation.
   if (history.length) {
     chatEl.classList.add("stale");
-    for (const m of history) addBubble(m.role, m.text);
+    for (const m of history) addBubble(m.role, m.text, "", m.from);
   }
   try {
     setStatus("loading…");
@@ -419,10 +501,19 @@ async function fetchHistory() {
     const result = await client.history(serverId, HISTORY_LIMIT, CLIENT_VERSION);
     const turns = result.turns || [];
     handleWarning(result.warning);
-    history = turns.map((t) => ({ role: t.role === "user" ? "user" : "agent", text: t.text }));
-    chatEl.replaceChildren();
-    chatEl.classList.remove("stale");
-    for (const m of history) addBubble(m.role, m.text);
+    // The desktop's threads, own first; a desktop from before threads sends
+    // only `turns`, which is the one thread there is.
+    threads = (result.threads && result.threads.length)
+      ? result.threads.map((t) => ({ owner: t.owner, name: t.name, turns: (t.turns || []).map(toMsg) }))
+      : [{ owner: "", name: "", turns: turns.map(toMsg) }];
+    switches = result.switches || [];
+    history = threads[0].turns;
+    if (result.you) {
+      youName = result.you;
+      try { localStorage.setItem(`hearth-you-${serverId}`, youName); } catch { /* private mode */ }
+    }
+    renderThreads();
+    offerVisibility();
     try { localStorage.setItem(HISTORY_KEY, JSON.stringify(history)); } catch { /* quota */ }
     historySynced = true;
     setStatus("ready");
@@ -437,6 +528,10 @@ async function fetchHistory() {
       chatEl.replaceChildren();
       chatEl.classList.remove("stale");
       history = [];
+      threads = [];
+      switches = [];
+      threadsEl.hidden = true;
+      offerVisibility();
       try { localStorage.removeItem(HISTORY_KEY); } catch { /* private mode */ }
       probe(`./__hearth_history__denied=1`);
       setStatus("not paired", true);
@@ -647,7 +742,8 @@ async function runTurn(job, pending) {
             // A resumed turn's reply may already be in the transcript the
             // page just fetched: show it once.
             if (!(job.resumed && history.some((h) => h.role === "agent" && h.text === ev.reply))) {
-              addBubble("agent", ev.reply);
+              // Into your own thread; drawn now only if that is what is on screen.
+              if (activeThread === null) addBubble("agent", ev.reply);
               saveHistory("agent", ev.reply);
             }
             setStatus("ready");
@@ -742,8 +838,8 @@ async function send(isAuto = false) {
   // Same marker the desktop writes into the transcript, so the bubble reads
   // the same now as it will after a history reload.
   const shown = (text || "(attached)") + files.map((f) => `\n[attached: ${f.name}]`).join("");
-  addBubble("user", shown);
-  saveHistory("user", shown);
+  addBubble("user", shown, "", youName);
+  saveHistory("user", shown, youName);
   const pending = addWorking();
 
   let outcome = { ok: false, reply: "" };
@@ -1303,12 +1399,133 @@ function registerServiceWorker() {
 /** True when running as an installed home-screen app rather than a browser tab. */
 function isStandalone() {
   return window.navigator.standalone === true
-    || window.matchMedia("(display-mode: standalone)").matches;
+    || window.matchMedia("(display-mode: standalone)").matches
+    || window.matchMedia("(display-mode: window-controls-overlay)").matches;
 }
 
 function isIOS() {
   return /iPad|iPhone|iPod/.test(navigator.userAgent)
     || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+}
+
+/** Which "how to install" this browser gets, in plain words. */
+function installPlatform() {
+  const ua = navigator.userAgent;
+  if (isIOS()) return "ios";
+  if (/Android/.test(ua)) return "android";
+  if (/Macintosh/.test(ua) && /Safari\//.test(ua) && !/Chrome|Chromium|CriOS|Edg|Firefox|FxiOS|OPR/.test(ua)) return "mac-safari";
+  if (/Chrome\/|Chromium\/|Edg\//.test(ua)) return "desktop-chromium";
+  // Desktop Firefox has no install at all; Firefox on Android does, above.
+  if (/Firefox\//.test(ua)) return "desktop-firefox";
+  return "unknown";
+}
+
+/** Fill the card's instructions: an Install button when the browser offered
+ * one, the menu path for this platform otherwise. */
+function renderInstallHow(how) {
+  how.replaceChildren();
+  const platform = installPlatform();
+  if (installPrompt && platform !== "ios" && platform !== "mac-safari" && platform !== "desktop-firefox") {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.id = "install-btn";
+    btn.textContent = "Install";
+    btn.onclick = async () => {
+      const offer = installPrompt;
+      installPrompt = null; // a prompt can be shown only once
+      btn.disabled = true;
+      let outcome = "dismissed";
+      try {
+        await offer.prompt();
+        outcome = (await offer.userChoice)?.outcome || "dismissed";
+      } catch (err) {
+        console.warn("install prompt failed", err);
+      }
+      const text = document.createElement("p");
+      text.textContent = outcome === "accepted"
+        ? "Installed. Open Hearth from the new app and pair there."
+        : (platform === "android"
+          ? "Not installed. You can still use ⋮ → Add to home screen, then open Hearth from the new icon and pair there."
+          : "Not installed. You can still use the Install icon in the address bar, then open Hearth from the installed app and pair there.");
+      how.replaceChildren(text);
+    };
+    const text = document.createElement("p");
+    text.textContent = "Then open Hearth from the installed app and pair there.";
+    how.append(btn, text);
+    return;
+  }
+  const text = document.createElement("p");
+  text.textContent = {
+    ios: "Tap Share, then Add to Home Screen. Then open Hearth from the new icon and pair there.",
+    android: "Tap ⋮ → Add to home screen. Then open Hearth from the new icon and pair there.",
+    "desktop-chromium": "Click the Install icon in the address bar. Then open Hearth from the installed app and pair there.",
+    "mac-safari": "Choose File → Add to Dock. Then open Hearth from the Dock and pair there.",
+    "desktop-firefox": "Firefox can't install web apps. Open this page in Chrome or Edge to install, or pair in this tab.",
+    unknown: "Add this page to your home screen or install it, then open it from there to pair.",
+  }[platform];
+  how.append(text);
+}
+
+/**
+ * An installed Hearth keeps its own storage, apart from the browser tab, so a
+ * device paired in a tab shows up unpaired in the icon added afterwards. When
+ * the desktop refuses this device and the page is a tab, say "install first"
+ * instead of asking for a code here. "Pair in this tab anyway" is the way out
+ * for a browser that can't install.
+ */
+function offerInstall() {
+  // Desktop Firefox can't install, so it isn't told to; its words are in renderInstallHow.
+  const lead = installPlatform() === "desktop-firefox"
+    ? "This device isn't paired yet."
+    : "This device isn't paired yet. Install Hearth first, then pair inside the installed app.";
+  const note = document.createElement("p");
+  note.className = "install-note";
+  note.textContent = "Pairing in this tab won't carry over to the installed app.";
+  const anyway = document.createElement("a");
+  anyway.href = "#";
+  anyway.id = "pair-anyway";
+  anyway.textContent = "Pair in this tab anyway";
+  const card = installCard(lead, note, anyway);
+  anyway.onclick = (e) => {
+    e.preventDefault();
+    card.remove();
+    offerCode();
+  };
+}
+
+/**
+ * A bare link (no desktop id) opened in a browser tab: the family landing
+ * (FAMILY-PLAN G1). Install first; the desktop is added inside the installed
+ * app, from the link or QR code the person is given. Same card, same
+ * per-platform words as offerInstall; there is nothing to pair with here, so
+ * no "pair in this tab anyway".
+ */
+function offerInstallFirst() {
+  const lead = installPlatform() === "desktop-firefox"
+    ? "Welcome to Hearth. Ask for your link or QR code: it adds your desktop."
+    : "Welcome to Hearth. Install it first, then open it from the new icon.";
+  const note = document.createElement("p");
+  note.className = "install-note";
+  note.textContent = "Inside Hearth, tap Desktops and scan the QR code or paste the link you were given.";
+  installCard(lead, note);
+}
+
+/** The install card: a lead line, this platform's how-to (renderInstallHow:
+ * the one copy of the per-platform words), then whatever `below` the caller
+ * adds. Appended to the chat; returned so the caller can remove it. */
+function installCard(leadText, ...below) {
+  const card = document.createElement("div");
+  card.id = "install-card";
+  const lead = document.createElement("p");
+  lead.className = "install-lead";
+  lead.textContent = leadText;
+  const how = document.createElement("div");
+  how.className = "install-how";
+  renderInstallHow(how);
+  card.append(lead, how, ...below);
+  chatEl.appendChild(card);
+  card.scrollIntoView({ block: "nearest" });
+  return card;
 }
 
 /**
@@ -1322,27 +1539,22 @@ function isIOS() {
  * opening a URL.
  */
 function offerPairing() {
-  if (document.getElementById("pair-form")) return; // already asking
+  // already asking, one way or the other
+  if (document.getElementById("pair-form") || document.getElementById("install-card")) return;
   setStatus("not paired", true);
   setComposer(false);
+  if (isStandalone()) offerCode();
+  else offerInstall();
+}
 
+/** The code prompt itself: in the installed app, or a tab by choice. */
+function offerCode() {
   addBubble(
     "agent",
     "This device isn't paired yet.\n\nOn your desktop run `hearth-desktop pair` "
     + "and type the code it prints below. The code is good for five minutes and "
     + "works once.",
   );
-
-  if (isIOS() && !isStandalone()) {
-    addBubble(
-      "agent",
-      "On iPhone, install first: tap Share, then Add to Home Screen, and open "
-      + "Hearth from the new icon. An installed app gets its own storage on iOS, "
-      + "so pairing here in Safari would not carry over — and only an installed "
-      + "app can receive notifications. The link is safe to install at any time; "
-      + "it holds no secret.",
-    );
-  }
 
   const wrap = document.createElement("form");
   wrap.id = "pair-form";
@@ -1758,6 +1970,10 @@ function renderHousehold(message, isError) {
   const savePolicies = el("button", { type: "button", textContent: "Save policies" });
   savePolicies.onclick = () => {
     const content = { roles: {}, people: {} };
+    // The visibility switches (`pairs`) are set by each parent through
+    // `setVisibility`, not here; the file is saved whole, so they ride along
+    // unchanged (the version check catches a switch flipped meanwhile).
+    if (Array.isArray(pol.pairs)) content.pairs = pol.pairs;
     for (const { r, f } of built) {
       const p = {};
       if (!f.inherit.checked) p.deny_tools = f.boxes.filter((b) => b.checked).map((b) => b.value);
@@ -1795,4 +2011,57 @@ async function revokeDevice(d, button, box) {
     button.disabled = false;
     show(box, errText(e), true);
   }
+}
+
+/* ---------------------------------------------------------------------------
+ * Visibility switches (B2-vis; src/threads.rs)
+ *
+ * A parent's (or the super user's) own (parent, kid) pairs, as the desktop
+ * serves them with history: two switches per kid, A "they see my chats" and
+ * B "I see theirs". The page shows them and sends each change as
+ * `setVisibility`; the desktop decides who may set what (a kid never, each
+ * parent their own) and its reason is shown verbatim. The button exists only
+ * when the desktop served switches to this device.
+ * ------------------------------------------------------------------------ */
+
+function offerVisibility() {
+  visibilityBtn.hidden = !switches.length || typeof client?.setVisibility !== "function";
+}
+
+visibilityBtn.addEventListener("click", () => { renderVisibility(); visibilityEl.hidden = false; });
+
+function renderVisibility(message = "", isError = false) {
+  const wrap = el("div", { className: "hh-wrap" });
+  const close = el("button", { type: "button", textContent: "✕", onclick: () => { visibilityEl.hidden = true; } });
+  close.setAttribute("aria-label", "Close");
+  wrap.append(el("div", { className: "list-head" }, el("h2", { textContent: "Who sees whose chats" }), close));
+  const box = msgBox();
+  show(box, message, isError);
+  wrap.append(box);
+  const rows = switches.map((sw) => {
+    const a = el("input", { type: "checkbox", checked: !!sw.childSeesParent });
+    const b = el("input", { type: "checkbox", checked: !!sw.parentSeesChild });
+    const flip = async (input, which) => {
+      input.disabled = true;
+      try {
+        await client.setVisibility(serverId, sw.child, which === "a" ? input.checked : null, which === "b" ? input.checked : null, CLIENT_VERSION);
+        await fetchHistory(); // the desktop's switches and threads are the truth
+        renderVisibility(`Saved for ${sw.childName}.`);
+      } catch (e) {
+        input.checked = !input.checked;
+        input.disabled = false;
+        show(box, errText(e), true);
+      }
+    };
+    a.onchange = () => flip(a, "a");
+    b.onchange = () => flip(b, "b");
+    return el("tr", {},
+      td("Kid", sw.childName),
+      td("They see mine", el("label", {}, a, ` ${sw.childName} sees my chats`)),
+      td("I see theirs", el("label", {}, b, ` I see ${sw.childName}'s chats`)));
+  });
+  wrap.append(el("section", { className: "hh-section" },
+    table(["Kid", "They see mine", "I see theirs"], rows),
+    el("p", { className: "hh-note", textContent: "Turning \"sees my chats\" on shows them only what is said in your thread from now on; nothing from before." })));
+  visibilityEl.replaceChildren(wrap);
 }

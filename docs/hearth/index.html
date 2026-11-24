@@ -144,6 +144,10 @@
       word-break: break-word;
     }
     .msg.user { align-self: flex-end; background: #3d5a44; border-bottom-right-radius: 4px; }
+    /* Who said it: a person, or a bot's runtime speaking through the outbox.
+       Shown on every phone, for every labelled turn: one conversation,
+       several people. */
+    .msg .from { display: block; font-size: 0.7rem; color: #b9cfbd; margin-bottom: 2px; }
     .msg.agent { align-self: flex-start; background: #2a2620; border-bottom-left-radius: 4px; }
     .msg.error { align-self: flex-start; background: #4a221d; color: #f0b9b0; }
     .msg.pending { opacity: 0.7; font-variant-numeric: tabular-nums; }
@@ -224,6 +228,13 @@
       font-size: 1.4rem; letter-spacing: 0.12em; text-align: center;
       text-transform: uppercase; font-family: ui-monospace, SFMono-Regular, monospace;
     }
+    /* "Install first": an installed app keeps its own storage, so the card
+       stands in for the code prompt in a browser tab (main.js offerInstall). */
+    #install-card { padding: 12px; margin: 8px 0; border: 1px solid #e8a44c; border-radius: 10px; width: 100%; }
+    #install-card p { margin: 0 0 8px; }
+    #install-card .install-note { font-size: 0.85rem; color: #b5ab9b; }
+    #install-btn { margin-bottom: 8px; padding: 8px 22px; }
+    #pair-anyway { font-size: 0.85rem; color: #e8a44c; }
     .join-ask { margin-top: 8px; background: transparent; color: #e8a44c; border: 1px solid #4a4335; }
     .join-request { padding: 10px; margin: 8px 0; border: 1px solid #4a4335; border-radius: 10px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
     .join-request div { width: 100%; }
@@ -232,14 +243,24 @@
     /* The household settings screen (super user only; main.js shows the
        button only when the desktop serves this device the view). Full width
        on a desktop browser, where Mike edits the tables; stacked on a phone. */
-    #household-btn:not([hidden]) + #switch { margin-left: 0; }
-    #household-btn { margin-left: auto; font-size: 0.8rem; font-weight: 600; padding: 4px 10px; border-radius: 12px; background: #2a2620; color: #ece5da; flex-shrink: 0; }
-    #household-btn[hidden] { display: none; }
-    #household {
+    /* The first visible header button takes the room; the ones after it sit
+       next to it. (Visibility: a parent's switches, B2-vis; Household: the
+       super user's settings.) */
+    header button:not([hidden]) ~ button { margin-left: 0; }
+    #household-btn, #visibility-btn { margin-left: auto; font-size: 0.8rem; font-weight: 600; padding: 4px 10px; border-radius: 12px; background: #2a2620; color: #ece5da; flex-shrink: 0; }
+    #household-btn[hidden], #visibility-btn[hidden] { display: none; }
+    #household, #visibility {
       position: fixed; inset: 0; z-index: 40; background: #16130f; overflow-y: auto;
       padding: max(10px, env(safe-area-inset-top)) 0 max(16px, env(safe-area-inset-bottom));
     }
-    #household[hidden] { display: none; }
+    #household[hidden], #visibility[hidden] { display: none; }
+    .hh-note { margin: 10px 0 0; font-size: 0.85rem; color: #8d8474; }
+    /* Threads (B2-vis): one tab per thread the desktop lets this device read,
+       own first. Shown only when there is more than one. */
+    #threads { display: flex; gap: 6px; padding: 8px 12px 0; overflow-x: auto; flex-shrink: 0; }
+    #threads[hidden] { display: none; }
+    .thread-tab { font-size: 0.85rem; padding: 4px 12px; border-radius: 12px; background: #2a2620; color: #8d8474; border: 1px solid #4a4335; white-space: nowrap; }
+    .thread-tab.active { color: #ece5da; border-color: #e8a44c; }
     .hh-wrap { max-width: 640px; margin: 0 auto; }
     .hh-section { margin: 0 16px 28px; }
     .hh-section h3 { font-size: 1.05rem; color: #e8a44c; margin-bottom: 8px; }
@@ -293,7 +314,7 @@
         padding-left: max(16px, env(safe-area-inset-left));
         padding-right: max(16px, env(safe-area-inset-right));
       }
-      #chat, #chips, #composer {
+      #chat, #chips, #composer, #threads {
         padding-left: max(16px, env(safe-area-inset-left), (100% - var(--column)) / 2);
         padding-right: max(16px, env(safe-area-inset-right), (100% - var(--column)) / 2);
       }
@@ -323,13 +344,14 @@
       body {
         display: grid;
         grid-template-columns: clamp(280px, 28vw, 360px) minmax(0, 1fr);
-        grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+        grid-template-rows: auto auto auto minmax(0, 1fr) auto auto;
       }
       header { grid-area: 1 / 2; }
       #notice { grid-area: 2 / 2; }
-      #chat { grid-area: 3 / 2; }
-      #chips { grid-area: 4 / 2; }
-      #composer { grid-area: 5 / 2; }
+      #threads { grid-area: 3 / 2; }
+      #chat { grid-area: 4 / 2; }
+      #chips { grid-area: 5 / 2; }
+      #composer { grid-area: 6 / 2; }
       #desktops {
         position: static; grid-area: 1 / 1 / -1 / 2; z-index: auto;
         max-width: none; animation: none; box-shadow: none;
@@ -353,12 +375,15 @@
   <header>
     <h1>Hearth</h1>
     <span id="status">loading…</span>
+    <button id="visibility-btn" type="button" hidden>Visibility</button>
     <button id="household-btn" type="button" hidden>Household</button>
     <button id="switch" type="button">Desktops ▾</button>
   </header>
   <div id="desktops" hidden></div>
   <div id="household" hidden></div>
+  <div id="visibility" hidden></div>
   <div id="notice" hidden></div>
+  <div id="threads" hidden></div>
   <div id="chat"></div>
   <div id="chips" hidden></div>
   <form id="composer">
@@ -373,6 +398,6 @@
     first visit to a browser happens before any worker is installed, and this
     keeps a plain HTTP cache from pairing a new index.html with an old main.js.
   -->
-  <script type="module" src="./main.js?v=0.4.7"></script>
+  <script type="module" src="./main.js?v=0.4.11"></script>
 </body>
 </html>
